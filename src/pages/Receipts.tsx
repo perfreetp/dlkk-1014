@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Search, Download, Percent, Receipt, DollarSign, Banknote, XCircle, CheckSquare, Square, Wand2, Minus, ChevronDown, ChevronUp, CheckCircle2, FileText } from 'lucide-react';
+import { Plus, Search, Download, Percent, Receipt as ReceiptIcon, DollarSign, Banknote, XCircle, CheckSquare, Square, Wand2, Minus, ChevronDown, ChevronUp, CheckCircle2, FileText, Trash2, AlertTriangle } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { PaymentMethodTag, BillStatusBadge } from '@/components/ui/StatusBadge';
 import { useAppStore } from '@/store';
-import type { Bill, PaymentMethod } from '@/types';
+import type { Bill, PaymentMethod, Receipt as ReceiptType } from '@/types';
 import { formatCurrency, formatDateTime, todayStr } from '@/utils/format';
 import { cn } from '@/utils/helpers';
 
@@ -25,11 +25,15 @@ export const Receipts = () => {
   const bills = useAppStore((s) => s.bills);
   const staffs = useAppStore((s) => s.staffs);
   const { addReceiptDetailed } = useAppStore();
+  const voidReceipt = useAppStore((s) => s.voidReceipt);
+  const currentStaff = useAppStore((s) => s.staffs.find((x) => x.role === 'finance') || s.staffs[0]);
 
   const [searchInput, setSearchInput] = useState('');
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | ''>('');
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<ReceiptType | null>(null);
+  const [voidReason, setVoidReason] = useState('');
 
   const [ownerId, setOwnerId] = useState('');
   const [selectedBillIds, setSelectedBillIds] = useState<string[]>([]);
@@ -271,7 +275,7 @@ export const Receipts = () => {
         <Card className="p-4 hoverable">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-success-50 flex items-center justify-center">
-              <Receipt className="w-5 h-5 text-success-600" />
+              <ReceiptIcon className="w-5 h-5 text-success-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">收款笔数</p>
@@ -370,6 +374,7 @@ export const Receipts = () => {
                   <th className="px-5 py-3">操作人</th>
                   <th className="px-5 py-3">收款时间</th>
                   <th className="px-5 py-3">备注</th>
+                  <th className="px-5 py-3 w-24">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -382,7 +387,8 @@ export const Receipts = () => {
                       key={r.id}
                       className={cn(
                         'border-b border-slate-50 transition-colors animate-fade-in-stagger',
-                        expanded ? 'bg-primary-50/40' : 'hover:bg-success-50/40'
+                        expanded ? 'bg-primary-50/40' : 'hover:bg-success-50/40',
+                        r.status === 'void' && 'opacity-60'
                       )}
                       style={{ animationDelay: `${i * 20}ms` }}
                     >
@@ -421,10 +427,24 @@ export const Receipts = () => {
                       <td className="px-5 py-3.5 text-slate-600">{r.operatorName}</td>
                       <td className="px-5 py-3.5 text-xs text-slate-500 font-mono">{r.payDate.slice(5, 16)}</td>
                       <td className="px-5 py-3.5 text-xs text-slate-500 max-w-[160px] truncate">{r.remark || '-'}</td>
+                      <td className="px-5 py-3.5">
+                        {r.status === 'void' ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-500 text-[11px] font-medium">已作废</span>
+                        ) : (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            icon={<Trash2 className="w-4 h-4" />}
+                            onClick={() => setVoidTarget(r)}
+                          >
+                            作废
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                     {expanded && allocations.length > 0 && (
                       <tr key={`${r.id}-detail`} className="bg-slate-50/60 border-b border-slate-100">
-                        <td colSpan={10} className="px-8 py-4">
+                        <td colSpan={11} className="px-8 py-4">
                           <div className="rounded-lg border border-primary-100 bg-white overflow-hidden">
                             <div className="px-4 py-2.5 bg-primary-50/70 border-b border-primary-100 flex items-center gap-2">
                               <FileText className="w-4 h-4 text-primary-600" />
@@ -478,7 +498,7 @@ export const Receipts = () => {
                 })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-5 py-16 text-center text-slate-400">暂无收款记录</td>
+                    <td colSpan={11} className="px-5 py-16 text-center text-slate-400">暂无收款记录</td>
                   </tr>
                 )}
               </tbody>
@@ -765,6 +785,74 @@ export const Receipts = () => {
           </div>
         </div>
       </Modal>
+
+      {voidTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-fade-in" onClick={() => setVoidTarget(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-danger-50 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-danger-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">确认作废收款单？</h3>
+                <p className="text-xs text-slate-500">撤回后将恢复账单余额与业主欠费，此操作不可撤销</p>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="rounded-xl bg-danger-50/50 border border-danger-100 p-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">收款单号</span>
+                  <span className="font-mono font-semibold text-slate-900">{voidTarget.id.slice(-10).toUpperCase()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">业主</span>
+                  <span className="font-medium text-slate-900">{voidTarget.ownerName} · {voidTarget.building} {voidTarget.room}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">核销账单</span>
+                  <span className="font-medium text-slate-900">{voidTarget.allocations?.length || 0} 张</span>
+                </div>
+                <div className="flex justify-between text-sm border-t border-danger-100 pt-2 mt-2">
+                  <span className="text-slate-500">撤回实收</span>
+                  <span className="font-bold text-danger-600 tabular-nums">-{formatCurrency(voidTarget.amount)}</span>
+                </div>
+                {voidTarget.discount > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">撤回减免</span>
+                    <span className="font-bold text-indigo-600 tabular-nums">-{formatCurrency(voidTarget.discount)}</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">作废原因 <span className="text-danger-500">*</span></label>
+                <textarea
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  placeholder="请录入作废原因，便于后续审计..."
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-danger-300/40 focus:border-danger-400 resize-none"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/40 rounded-b-2xl flex items-center justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setVoidTarget(null); setVoidReason(''); }}>取消</Button>
+              <Button
+                variant="danger"
+                size="sm"
+                icon={<Trash2 className="w-4 h-4" />}
+                disabled={!voidReason.trim()}
+                onClick={() => {
+                  voidReceipt(voidTarget.id, voidReason.trim(), currentStaff.id, currentStaff.name);
+                  setVoidTarget(null);
+                  setVoidReason('');
+                }}
+              >
+                确认作废
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

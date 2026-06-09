@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Search, Filter, X, ChevronDown, ChevronUp, Eye, Phone, FileText, Receipt, MessageSquare, Clock, CalendarDays, AlertCircle, CheckCircle2, TrendingUp, Users } from 'lucide-react';
+import { useState, useMemo, Fragment } from 'react';
+import { Search, Filter, X, ChevronDown, ChevronUp, Eye, Phone, FileText, Receipt, MessageSquare, Clock, CalendarDays, AlertCircle, CheckCircle2, TrendingUp, Users, User, PieChart, ChevronRight } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
@@ -34,6 +34,8 @@ export const Owners = () => {
 
   const [showFilters, setShowFilters] = useState(false);
   const [searchInput, setSearchInput] = useState(ownerFilters.keyword || '');
+  const [ownerTab, setOwnerTab] = useState<'profile' | 'finance'>('profile');
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
 
   const selectedOwner = useMemo(
     () => owners.find((o) => o.id === selectedOwnerId) || null,
@@ -309,65 +311,337 @@ export const Owners = () => {
               </div>
             </div>
 
-            <div className="px-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-slate-500">联系电话</p>
-                  <p className="text-sm font-medium text-slate-900 mt-0.5">{selectedOwner.phone}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500">入住日期</p>
-                  <p className="text-sm font-medium text-slate-900 mt-0.5">{formatDate(selectedOwner.moveInDate)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500">欠费月数</p>
-                  <p className={cn(
-                    'text-sm font-bold mt-0.5',
-                    selectedOwner.unpaidMonths >= 6 ? 'text-danger-500' : 'text-warning-600'
-                  )}>
-                    {selectedOwner.unpaidMonths} 个月
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500">欠费总额</p>
-                  <p className="text-sm font-bold text-danger-500 mt-0.5">{formatCurrency(selectedOwner.unpaidAmount)}</p>
-                </div>
-              </div>
+            <div className="border-b border-slate-200 px-6 flex items-center gap-1">
+              {([
+                { key: 'profile' as const, label: '档案与时间线', icon: User },
+                { key: 'finance' as const, label: '账务汇总', icon: PieChart },
+              ]).map((t) => {
+                const Icon = t.icon;
+                const active = ownerTab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => { setOwnerTab(t.key); setExpandedMonth(null); }}
+                    className={cn(
+                      'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors',
+                      active
+                        ? 'border-primary-700 text-primary-800'
+                        : 'border-transparent text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="px-6">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-semibold text-slate-900">历史账单 ({ownerBills.length})</h4>
-              </div>
-              <div className="space-y-2">
-                {ownerBills.slice(0, 5).map((b) => (
-                  <div key={b.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-primary-200 hover:bg-primary-50/30 transition-colors">
+            {ownerTab === 'profile' && (
+              <>
+                <div className="px-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <p className="text-sm font-medium text-slate-900">{b.period} 账期</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">物业费+水电等</p>
+                      <p className="text-xs text-slate-500">联系电话</p>
+                      <p className="text-sm font-medium text-slate-900 mt-0.5">{selectedOwner.phone}</p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrency(b.totalAmount)}</p>
-                      <div className="mt-0.5"><BillStatusBadge status={b.status} /></div>
+                    <div>
+                      <p className="text-xs text-slate-500">入住日期</p>
+                      <p className="text-sm font-medium text-slate-900 mt-0.5">{formatDate(selectedOwner.moveInDate)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">欠费月数</p>
+                      <p className={cn(
+                        'text-sm font-bold mt-0.5',
+                        selectedOwner.unpaidMonths >= 6 ? 'text-danger-500' : 'text-warning-600'
+                      )}>
+                        {selectedOwner.unpaidMonths} 个月
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">欠费总额</p>
+                      <p className="text-sm font-bold text-danger-500 mt-0.5">{formatCurrency(selectedOwner.unpaidAmount)}</p>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            <div className="px-6 pb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-                  <TrendingUp className="w-4 h-4 text-primary-600" />
-                  完整跟进时间线
-                </h4>
-                <span className="text-[11px] text-slate-500">共 {ownerBills.length + ownerNotifs.length + ownerReceipts.length} 条记录</span>
-              </div>
-              <OwnerTimeline bills={ownerBills} receipts={ownerReceipts} notifications={ownerNotifs} tasks={ownerTasks} />
-            </div>
+                <div className="px-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-semibold text-slate-900">历史账单 ({ownerBills.length})</h4>
+                  </div>
+                  <div className="space-y-2">
+                    {ownerBills.slice(0, 5).map((b) => (
+                      <div key={b.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-primary-200 hover:bg-primary-50/30 transition-colors">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">{b.period} 账期</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">物业费+水电等</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrency(b.totalAmount)}</p>
+                          <div className="mt-0.5"><BillStatusBadge status={b.status} /></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="px-6 pb-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                      <TrendingUp className="w-4 h-4 text-primary-600" />
+                      完整跟进时间线
+                    </h4>
+                    <span className="text-[11px] text-slate-500">共 {ownerBills.length + ownerNotifs.length + ownerReceipts.length} 条记录</span>
+                  </div>
+                  <OwnerTimeline bills={ownerBills} receipts={ownerReceipts} notifications={ownerNotifs} tasks={ownerTasks} />
+                </div>
+              </>
+            )}
+
+            {ownerTab === 'finance' && (
+              <OwnerFinanceSummary
+                ownerBills={ownerBills}
+                ownerReceipts={ownerReceipts}
+                unpaidAmount={selectedOwner.unpaidAmount}
+                expandedMonth={expandedMonth}
+                setExpandedMonth={setExpandedMonth}
+              />
+            )}
           </div>
         )}
       </Drawer>
+    </div>
+  );
+};
+
+const OwnerFinanceSummary = ({
+  ownerBills, ownerReceipts, unpaidAmount, expandedMonth, setExpandedMonth,
+}: {
+  ownerBills: import('@/types').Bill[];
+  ownerReceipts: import('@/types').Receipt[];
+  unpaidAmount: number;
+  expandedMonth: string | null;
+  setExpandedMonth: (m: string | null) => void;
+}) => {
+  const kpi = useMemo(() => {
+    const billed = ownerBills.filter(b => b.status !== 'void').reduce((s, b) => s + b.totalAmount, 0);
+    const received = ownerReceipts.filter(r => r.status !== 'void').reduce((s, r) => s + r.amount, 0);
+    const discount = ownerReceipts.filter(r => r.status !== 'void').reduce((s, r) => s + (r.discount || 0), 0);
+    return { billed, received, discount, unpaid: unpaidAmount };
+  }, [ownerBills, ownerReceipts, unpaidAmount]);
+
+  const monthlyData = useMemo(() => {
+    const monthMap = new Map<string, {
+      billed: number; received: number; discount: number; voided: number;
+      bills: import('@/types').Bill[]; receipts: import('@/types').Receipt[];
+    }>();
+
+    for (const b of ownerBills) {
+      if (!monthMap.has(b.period)) {
+        monthMap.set(b.period, { billed: 0, received: 0, discount: 0, voided: 0, bills: [], receipts: [] });
+      }
+      const m = monthMap.get(b.period)!;
+      m.bills.push(b);
+      if (b.status === 'void') {
+        m.voided += b.totalAmount;
+      } else {
+        m.billed += b.totalAmount;
+      }
+    }
+
+    for (const r of ownerReceipts) {
+      if (r.status === 'void') continue;
+      const payMonth = r.payDate.slice(0, 7);
+      if (!monthMap.has(payMonth)) {
+        monthMap.set(payMonth, { billed: 0, received: 0, discount: 0, voided: 0, bills: [], receipts: [] });
+      }
+      const m = monthMap.get(payMonth)!;
+      m.receipts.push(r);
+      m.received += r.amount;
+      m.discount += r.discount || 0;
+    }
+
+    const sortedMonths = Array.from(monthMap.keys()).sort();
+    let cumUnpaid = 0;
+    return sortedMonths.map((period) => {
+      const d = monthMap.get(period)!;
+      const monthUnpaid = Math.max(0, d.billed - d.received - d.discount);
+      cumUnpaid += monthUnpaid;
+      return {
+        period,
+        ...d,
+        unpaid: Math.max(0, d.billed - d.received - d.discount),
+        cumUnpaid,
+      };
+    }).reverse();
+  }, [ownerBills, ownerReceipts]);
+
+  return (
+    <div className="space-y-5 pb-6">
+      <div className="px-6 grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50">
+          <p className="text-[11px] text-slate-500">累计应收</p>
+          <p className="mt-1 text-lg font-bold text-slate-900 font-serif tabular-nums">{formatCurrency(kpi.billed)}</p>
+        </div>
+        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-success-50/40">
+          <p className="text-[11px] text-slate-500">累计实收</p>
+          <p className="mt-1 text-lg font-bold text-success-700 font-serif tabular-nums">{formatCurrency(kpi.received)}</p>
+        </div>
+        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-indigo-50/40">
+          <p className="text-[11px] text-slate-500">累计减免</p>
+          <p className="mt-1 text-lg font-bold text-indigo-600 font-serif tabular-nums">{formatCurrency(kpi.discount)}</p>
+        </div>
+        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-warning-50/40">
+          <p className="text-[11px] text-slate-500">当前欠费</p>
+          <p className="mt-1 text-lg font-bold text-warning-600 font-serif tabular-nums">{formatCurrency(kpi.unpaid)}</p>
+        </div>
+      </div>
+
+      <div className="px-6">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+            <CalendarDays className="w-4 h-4 text-primary-600" />
+            月度账务明细
+          </h4>
+          <span className="text-[11px] text-slate-500">共 {monthlyData.length} 个月</span>
+        </div>
+
+        <div className="rounded-xl border border-slate-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                  <th className="px-3 py-2.5">月份</th>
+                  <th className="px-3 py-2.5 text-right">应收</th>
+                  <th className="px-3 py-2.5 text-right">实收</th>
+                  <th className="px-3 py-2.5 text-right">减免</th>
+                  <th className="px-3 py-2.5 text-right">作废</th>
+                  <th className="px-3 py-2.5 text-right">欠费</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyData.map((m) => {
+                  const expanded = expandedMonth === m.period;
+                  return (
+                    <Fragment key={m.period}>
+                      <tr
+                        className={cn(
+                          'border-b border-slate-50 transition-colors cursor-pointer',
+                          expanded ? 'bg-primary-50/50' : 'hover:bg-primary-50/40'
+                        )}
+                        onClick={() => setExpandedMonth(expanded ? null : m.period)}
+                      >
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-1">
+                            {expanded
+                              ? <ChevronDown className="w-3.5 h-3.5 text-primary-600" />
+                              : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                            }
+                            <span className="font-medium text-slate-900">{m.period}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-slate-900 font-medium tabular-nums">{formatCurrency(m.billed)}</td>
+                        <td className="px-3 py-2.5 text-right text-success-700 font-medium tabular-nums">{formatCurrency(m.received)}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          {m.discount > 0
+                            ? <span className="text-indigo-600 font-medium tabular-nums">-{formatCurrency(m.discount)}</span>
+                            : <span className="text-slate-300 tabular-nums">—</span>
+                          }
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {m.voided > 0
+                            ? <span className="text-slate-400 font-medium tabular-nums line-through">{formatCurrency(m.voided)}</span>
+                            : <span className="text-slate-300 tabular-nums">—</span>
+                          }
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {m.unpaid > 0
+                            ? <span className="text-warning-600 font-bold tabular-nums">{formatCurrency(m.unpaid)}</span>
+                            : <span className="text-slate-400 font-medium tabular-nums">{formatCurrency(0)}</span>
+                          }
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr className="bg-slate-50/30">
+                          <td colSpan={6} className="px-3 py-3">
+                            <div className="space-y-3 animate-fade-in">
+                              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                <div className="px-3 py-2 bg-slate-50/70 border-b border-slate-100 flex items-center gap-1.5">
+                                  <FileText className="w-3.5 h-3.5 text-primary-600" />
+                                  <p className="text-[11px] font-semibold text-primary-800">📋 本月账单（{m.bills.length} 张）</p>
+                                </div>
+                                <div className="p-2 space-y-1.5 max-h-48 overflow-y-auto">
+                                  {m.bills.length === 0 ? (
+                                    <p className="px-2 py-3 text-center text-[11px] text-slate-400">本月无账单</p>
+                                  ) : m.bills.map((b) => (
+                                    <div key={b.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-primary-50/30 transition-colors">
+                                      <div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs font-medium text-slate-800">{b.period} 账期</span>
+                                          <BillStatusBadge status={b.status} />
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">生成日期：{b.generateDate}</p>
+                                      </div>
+                                      <div className="text-right">
+                                        <p className="text-xs font-bold text-slate-900 tabular-nums">{formatCurrency(b.totalAmount)}</p>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">
+                                          已缴 <span className="text-success-600 tabular-nums">{formatCurrency(b.paidAmount)}</span>
+                                          {b.status !== 'void' && b.totalAmount - b.paidAmount > 0 && (
+                                            <> / 待缴 <span className="text-danger-500 font-medium tabular-nums">{formatCurrency(Math.max(0, b.totalAmount - b.paidAmount))}</span></>
+                                          )}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                <div className="px-3 py-2 bg-success-50/70 border-b border-success-100 flex items-center gap-1.5">
+                                  <Receipt className="w-3.5 h-3.5 text-success-600" />
+                                  <p className="text-[11px] font-semibold text-success-800">💰 本月收款（{m.receipts.length} 笔）</p>
+                                </div>
+                                <div className="p-2 space-y-1.5 max-h-48 overflow-y-auto">
+                                  {m.receipts.length === 0 ? (
+                                    <p className="px-2 py-3 text-center text-[11px] text-slate-400">本月无收款记录</p>
+                                  ) : m.receipts.map((r) => (
+                                    <div key={r.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-success-50/40 transition-colors">
+                                      <div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs font-semibold text-success-800">收款 #{r.id.slice(-6).toUpperCase()}</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">
+                                          {r.payDate.slice(5, 16)} · {r.operatorName} · {r.method}
+                                        </p>
+                                      </div>
+                                      <div className="text-right">
+                                        <p className="text-xs font-bold text-success-700 tabular-nums">+{formatCurrency(r.amount)}</p>
+                                        {r.discount > 0 && (
+                                          <p className="text-[10px] text-indigo-600 mt-0.5 tabular-nums">减免 {formatCurrency(r.discount)}</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {monthlyData.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-10 text-center text-slate-400 text-xs">
+                      暂无账务数据
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

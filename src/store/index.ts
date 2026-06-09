@@ -124,6 +124,7 @@ interface AppStore {
   }) => void;
 
   recalcOwnerUnpaid: (ownerId: string, bills: Bill[]) => Pick<Owner, 'unpaidAmount' | 'unpaidMonths' | 'status'>;
+  voidReceipt: (id: string, reason: string, operatorId: string, operatorName: string) => void;
   resetAllData: () => void;
 }
 
@@ -387,6 +388,47 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return { unpaidAmount, unpaidMonths, status };
   },
 
+  voidReceipt: (id, reason, operatorId, operatorName) => {
+    set((state) => {
+      const target = state.receipts.find((r) => r.id === id);
+      if (!target || target.status === 'void') return state;
+      const bills = state.bills.map((b) => {
+        const alloc = target.allocations?.find((a) => a.billId === b.id);
+        if (!alloc) return b;
+        const rollback = Math.round((alloc.allocated + alloc.discount) * 100) / 100;
+        const newPaid = Math.max(0, Math.round((b.paidAmount - rollback) * 100) / 100);
+        return {
+          ...b,
+          paidAmount: newPaid,
+          status: getBillStatus(b.totalAmount, newPaid, b.status === 'void' ? 'void' : undefined),
+        };
+      });
+      const ownerUpdate = get().recalcOwnerUnpaid(target.ownerId, bills);
+      const owners = state.owners.map((o) => (o.id === target.ownerId ? { ...o, ...ownerUpdate } : o));
+      const receipts = state.receipts.map((r) =>
+        r.id === id
+          ? { ...r, status: 'void' as const, voidReason: reason, voidDate: nowStr(), voidOperatorId: operatorId, voidOperatorName: operatorName }
+          : r
+      );
+      const voidNotify: Notification = {
+        id: generateId('N'),
+        receiptId: id,
+        ownerId: target.ownerId,
+        ownerName: target.ownerName,
+        method: 'system',
+        notifyDate: nowStr(),
+        result: 'void',
+        operatorId,
+        operatorName,
+        content: `作废收款单：实收 ${formatCurrency(target.amount)}${target.discount > 0 ? `，减免 ${formatCurrency(target.discount)}` : ''}，撤回 ${target.allocations?.length || 0} 张账单核销${reason ? `（原因：${reason}）` : ''}`,
+        eventType: 'receipt_void',
+      };
+      const newState = { bills, owners, receipts, notifications: [voidNotify, ...state.notifications] };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
+  },
+
   addReceiptDetailed: ({
     ownerId, ownerName, building, room, method, operatorId, operatorName, remark,
     billSelections,
@@ -421,13 +463,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       operatorId,
       operatorName,
       remark,
+      status: 'normal' as const,
     };
 
     set((state) => {
       const bills = state.bills.map((b) => {
         const sel = billSelections.find((s) => s.bill.id === b.id);
         if (!sel) return b;
-        const paid = Math.round((b.paidAmount + sel.allocation) * 100) / 100;
+        const paid = Math.round((b.paidAmount + sel.allocation + sel.discount) * 100) / 100;
         return {
           ...b,
           paidAmount: Math.min(paid, b.totalAmount),

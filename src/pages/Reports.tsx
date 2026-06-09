@@ -50,74 +50,119 @@ export const Reports = () => {
     setSelectedStaffs((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
   };
 
+  const filteredMonths = useMemo(() => {
+    const startIdx = allMonths.indexOf(monthStart);
+    const endIdx = allMonths.indexOf(monthEnd);
+    const [s, e] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+    return allMonths.slice(s, e + 1);
+  }, [allMonths, monthStart, monthEnd]);
+
   const buildingData = useMemo(() => {
     const buildingSet = new Set(selectedBuildings);
-    const map = new Map<string, { households: number; unpaidHouseholds: number; unpaidAmount: number; paidAmount: number; totalBilled: number }>();
+    const monthSet = new Set(filteredMonths);
+    const map = new Map<string, { households: number; unpaidHouseholds: number; billed: number; received: number; discount: number }>();
+
     for (const o of owners) {
       if (!buildingSet.has(o.building)) continue;
-      const prev = map.get(o.building) || { households: 0, unpaidHouseholds: 0, unpaidAmount: 0, paidAmount: 0, totalBilled: 0 };
+      const prev = map.get(o.building) || { households: 0, unpaidHouseholds: 0, billed: 0, received: 0, discount: 0 };
       map.set(o.building, {
         ...prev,
         households: prev.households + 1,
         unpaidHouseholds: prev.unpaidHouseholds + (o.unpaidAmount > 0 ? 1 : 0),
-        unpaidAmount: prev.unpaidAmount + o.unpaidAmount,
       });
     }
+
     for (const b of bills) {
       if (b.status === 'void') continue;
       if (!buildingSet.has(b.building)) continue;
+      if (!monthSet.has(b.period)) continue;
       if (!map.has(b.building)) continue;
-      const prev = map.get(b.building)!;
-      prev.paidAmount += b.paidAmount;
-      prev.totalBilled += b.totalAmount;
+      map.get(b.building)!.billed += b.totalAmount;
     }
+
+    for (const r of receipts) {
+      if (r.status === 'void') continue;
+      if (!buildingSet.has(r.building)) continue;
+      if (!selectedStaffs.includes(r.operatorName)) continue;
+      const payMonth = r.payDate.slice(0, 7);
+      if (!monthSet.has(payMonth)) continue;
+      if (!map.has(r.building)) continue;
+      const prev = map.get(r.building)!;
+      prev.received += r.amount;
+      prev.discount += r.discount || 0;
+    }
+
     return Array.from(map.entries())
       .map(([building, d]) => {
-        const total = d.totalBilled;
-        const rate = total > 0 ? d.paidAmount / total : 0;
+        const unpaid = Math.max(0, d.billed - d.received - d.discount);
+        const rate = d.billed > 0 ? (d.received + d.discount) / d.billed : 0;
         return {
           building,
           '户数': d.households,
           '欠费户数': d.unpaidHouseholds,
-          '欠费金额': Math.round(d.unpaidAmount),
-          '实收金额': Math.round(d.paidAmount),
-          '应收金额': Math.round(total),
+          '应收金额': Math.round(d.billed),
+          '实收金额': Math.round(d.received),
+          '减免金额': Math.round(d.discount),
+          '欠费金额': Math.round(unpaid),
           '收缴率': Math.round(rate * 1000) / 10,
         };
       })
       .sort((a, b) => b['欠费金额'] - a['欠费金额'])
       .map((d, i) => ({ ...d, 排名: i + 1 }));
-  }, [owners, bills, selectedBuildings]);
+  }, [owners, bills, receipts, selectedBuildings, selectedStaffs, filteredMonths]);
 
   const monthlyData = useMemo(() => {
-    const startIdx = allMonths.indexOf(monthStart);
-    const endIdx = allMonths.indexOf(monthEnd);
-    const [s, e] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
-    return allMonths.slice(s, e + 1).map((m) => {
+    return filteredMonths.map((m) => {
       const billed = bills.filter((b) => b.period === m && b.status !== 'void' && selectedBuildings.includes(b.building)).reduce((sum, b) => sum + b.totalAmount, 0);
-      const received = receipts.filter((r) => r.payDate.startsWith(m) && selectedBuildings.includes(r.building)).reduce((sum, r) => sum + r.amount, 0);
-      const unpaid = Math.max(0, billed - received);
+      const mReceipts = receipts.filter((r) => r.status !== 'void' && r.payDate.startsWith(m) && selectedBuildings.includes(r.building) && selectedStaffs.includes(r.operatorName));
+      const received = mReceipts.reduce((sum, r) => sum + r.amount, 0);
+      const discount = mReceipts.reduce((sum, r) => sum + (r.discount || 0), 0);
+      const unpaid = Math.max(0, billed - received - discount);
       return {
         月份: m.replace('2026-', '') + '月',
         _period: m,
         应收: Math.round(billed),
         实收: Math.round(received),
+        减免: Math.round(discount),
         欠费: Math.round(unpaid),
-        收缴率: billed > 0 ? Math.round((received / billed) * 1000) / 10 : 0,
+        收缴率: billed > 0 ? Math.round(((received + discount) / billed) * 1000) / 10 : 0,
       };
     });
-  }, [bills, receipts, selectedBuildings, monthStart, monthEnd, allMonths]);
+  }, [bills, receipts, selectedBuildings, selectedStaffs, filteredMonths]);
 
   const staffData = useMemo(() => {
+    const monthSet = new Set(filteredMonths);
     return staffs
       .filter((s) => s.role === 'service' && selectedStaffs.includes(s.name))
       .map((s) => {
-        const sTasks = tasks.filter((t) => t.assigneeName === s.name && (t.building ? selectedBuildings.includes(t.building) : true));
+        const sTasks = tasks.filter((t) => {
+          if (t.assigneeName !== s.name) return false;
+          if (t.building && !selectedBuildings.includes(t.building)) return false;
+          const taskMonth = t.createDate.slice(0, 7);
+          if (!monthSet.has(taskMonth)) return false;
+          return true;
+        });
         const completedTasks = sTasks.filter((t) => t.status === 'completed');
         const totalTasks = sTasks.length;
-        const sNotifs = notifications.filter((n) => n.operatorName === s.name && (n.ownerId ? (() => { const o = owners.find((x) => x.id === n.ownerId); return o ? selectedBuildings.includes(o.building) : true; })() : true));
+        const sNotifs = notifications.filter((n) => {
+          if (n.operatorName !== s.name) return false;
+          if (n.ownerId) {
+            const o = owners.find((x) => x.id === n.ownerId);
+            if (o && !selectedBuildings.includes(o.building)) return false;
+          }
+          const notifMonth = n.notifyDate.slice(0, 7);
+          if (!monthSet.has(notifMonth)) return false;
+          return true;
+        });
         const successNotifs = sNotifs.filter((n) => n.result === 'success' || n.result === 'promised').length;
-        const totalReceipts = receipts.filter((r) => r.operatorName === s.name && selectedBuildings.includes(r.building)).reduce((sum, r) => sum + r.amount, 0);
+        const totalReceipts = receipts.filter((r) => {
+          if (r.status === 'void') return false;
+          if (r.operatorName !== s.name) return false;
+          if (!selectedBuildings.includes(r.building)) return false;
+          const payMonth = r.payDate.slice(0, 7);
+          if (!monthSet.has(payMonth)) return false;
+          return true;
+        }).reduce((sum, r) => sum + r.amount, 0);
         return {
           staffId: s.id,
           staffName: s.name,
@@ -130,7 +175,7 @@ export const Reports = () => {
         };
       })
       .sort((a, b) => b['完成任务'] - a['完成任务']);
-  }, [staffs, tasks, notifications, receipts, owners, selectedStaffs, selectedBuildings]);
+  }, [staffs, tasks, notifications, receipts, owners, selectedStaffs, selectedBuildings, filteredMonths]);
 
   const resetAllFilters = () => {
     setSelectedBuildings(allBuildings);
@@ -146,16 +191,16 @@ export const Reports = () => {
 
   const exportBuilding = () => {
     downloadCSV(
-      ['排名', '楼栋', '户数', '欠费户数', '欠费金额', '应收金额', '实收金额', '收缴率'],
-      buildingData.map((d) => [d.排名, d.building, d['户数'], d['欠费户数'], d['欠费金额'], d['应收金额'], d['实收金额'], `${d['收缴率']}%`]),
+      ['排名', '楼栋', '户数', '欠费户数', '应收金额', '实收金额', '减免金额', '欠费金额', '收缴率'],
+      buildingData.map((d) => [d.排名, d.building, d['户数'], d['欠费户数'], d['应收金额'], d['实收金额'], d['减免金额'], d['欠费金额'], `${d['收缴率']}%`]),
       `楼栋汇总报表_${new Date().toISOString().slice(0, 10)}`
     );
   };
 
   const exportMonthly = () => {
     downloadCSV(
-      ['月份', '应收', '实收', '欠费', '收缴率'],
-      monthlyData.map((d) => [d.月份, d.应收, d.实收, d.欠费, `${d.收缴率}%`]),
+      ['月份', '应收', '实收', '减免', '欠费', '收缴率'],
+      monthlyData.map((d) => [d.月份, d.应收, d.实收, d.减免, d.欠费, `${d.收缴率}%`]),
       `月度报表_${new Date().toISOString().slice(0, 10)}`
     );
   };
@@ -214,8 +259,9 @@ export const Reports = () => {
               <p className="mt-1 text-2xl font-bold text-warning-600 font-serif tabular-nums">
                 {(() => {
                   const totalBilled = buildingData.reduce((s, d) => s + d['应收金额'], 0);
-                  const totalPaid = buildingData.reduce((s, d) => s + d['实收金额'], 0);
-                  return totalBilled > 0 ? formatPercent(totalPaid / totalBilled) : '—';
+                  const totalReceived = buildingData.reduce((s, d) => s + d['实收金额'], 0);
+                  const totalDiscount = buildingData.reduce((s, d) => s + d['减免金额'], 0);
+                  return totalBilled > 0 ? formatPercent((totalReceived + totalDiscount) / totalBilled) : '—';
                 })()}
               </p>
             </div>
@@ -423,9 +469,10 @@ export const Reports = () => {
                         <th className="px-4 py-3">楼栋</th>
                         <th className="px-4 py-3 text-right">总户数</th>
                         <th className="px-4 py-3 text-right">欠费户数</th>
-                        <th className="px-4 py-3 text-right">欠费金额</th>
                         <th className="px-4 py-3 text-right">应收总额</th>
                         <th className="px-4 py-3 text-right">实收总额</th>
+                        <th className="px-4 py-3 text-right">减免金额</th>
+                        <th className="px-4 py-3 text-right">欠费金额</th>
                         <th className="px-4 py-3 text-right">收缴率</th>
                       </tr>
                     </thead>
@@ -453,9 +500,10 @@ export const Reports = () => {
                               {d['欠费户数']}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right text-danger-500 font-medium tabular-nums">{formatCurrency(d['欠费金额'])}</td>
                           <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(d['应收金额'])}</td>
                           <td className="px-4 py-3 text-right text-success-700 font-medium tabular-nums">{formatCurrency(d['实收金额'])}</td>
+                          <td className="px-4 py-3 text-right text-indigo-600 font-medium tabular-nums">{formatCurrency(d['减免金额'])}</td>
+                          <td className="px-4 py-3 text-right text-danger-500 font-medium tabular-nums">{formatCurrency(d['欠费金额'])}</td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <div className="w-20 h-2 rounded-full bg-slate-100 overflow-hidden">
@@ -504,6 +552,7 @@ export const Reports = () => {
                     <Legend wrapperStyle={{ paddingTop: 10, fontSize: 12 }} />
                     <Line yAxisId="left" type="monotone" dataKey="应收" stroke="#1e3a5f" strokeWidth={3} dot={{ r: 5, fill: '#1e3a5f', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 7 }} />
                     <Line yAxisId="left" type="monotone" dataKey="实收" stroke="#10b981" strokeWidth={3} dot={{ r: 5, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 7 }} />
+                    <Line yAxisId="left" type="monotone" dataKey="减免" stroke="#6366f1" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 4, fill: '#6366f1', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
                     <Line yAxisId="left" type="monotone" dataKey="欠费" stroke="#ef4444" strokeWidth={3} strokeDasharray="6 4" dot={{ r: 5, fill: '#ef4444', strokeWidth: 2, stroke: '#fff' }} />
                     <Line yAxisId="right" type="monotone" dataKey="收缴率" stroke="#f59e0b" strokeWidth={2.5} strokeDasharray="4 4" dot={{ r: 4, fill: '#f59e0b' }} />
                   </LineChart>
@@ -528,7 +577,7 @@ export const Reports = () => {
                         {m['收缴率']}%
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-4 gap-3">
                       <div>
                         <p className="text-[10px] text-slate-500 uppercase">应收</p>
                         <p className="mt-0.5 text-sm font-bold text-slate-900 tabular-nums">{(m.应收 / 10000).toFixed(1)}万</p>
@@ -536,6 +585,10 @@ export const Reports = () => {
                       <div>
                         <p className="text-[10px] text-success-600 uppercase">实收</p>
                         <p className="mt-0.5 text-sm font-bold text-success-700 tabular-nums">{(m.实收 / 10000).toFixed(1)}万</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-indigo-600 uppercase">减免</p>
+                        <p className="mt-0.5 text-sm font-bold text-indigo-600 tabular-nums">{(m.减免 / 10000).toFixed(1)}万</p>
                       </div>
                       <div>
                         <p className="text-[10px] text-danger-500 uppercase">欠费</p>
@@ -553,6 +606,7 @@ export const Reports = () => {
                       <th className="px-4 py-3">月份</th>
                       <th className="px-4 py-3 text-right">应收金额</th>
                       <th className="px-4 py-3 text-right">实收金额</th>
+                      <th className="px-4 py-3 text-right">减免金额</th>
                       <th className="px-4 py-3 text-right">欠费金额</th>
                       <th className="px-4 py-3 text-right">收缴率</th>
                       <th className="px-4 py-3 text-right">环比</th>
@@ -567,6 +621,7 @@ export const Reports = () => {
                           <td className="px-4 py-3 font-medium text-slate-900">{m.月份}</td>
                           <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(m.应收)}</td>
                           <td className="px-4 py-3 text-right text-success-700 font-medium tabular-nums">{formatCurrency(m.实收)}</td>
+                          <td className="px-4 py-3 text-right text-indigo-600 font-medium tabular-nums">{formatCurrency(m.减免)}</td>
                           <td className="px-4 py-3 text-right text-danger-500 font-medium tabular-nums">{formatCurrency(m.欠费)}</td>
                           <td className="px-4 py-3 text-right">
                             <span className={cn(

@@ -73,6 +73,7 @@ export type NotificationEventType =
   | 'bill_generate'
   | 'receipt_record'
   | 'receipt_discount'
+  | 'receipt_void'
   | 'task_assign';
 
 export interface Notification {
@@ -123,6 +124,11 @@ export interface Receipt {
   operatorId: string;
   operatorName: string;
   remark?: string;
+  status: 'normal' | 'void';
+  voidReason?: string;
+  voidDate?: string;
+  voidOperatorId?: string;
+  voidOperatorName?: string;
 }
 
 export type StaffRole = 'finance' | 'service' | 'manager';

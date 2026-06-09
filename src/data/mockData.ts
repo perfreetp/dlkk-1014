@@ -186,6 +186,7 @@ export const mockReceipts: Receipt[] = Array.from({ length: 40 }, (_, i) => {
     operatorId: generateId('S'),
     operatorName,
     remark: discount > 0 ? '老业主优惠减免' : fullPay ? undefined : '部分缴费，剩余下次缴清',
+    status: 'normal' as const,
   };
 });
 
