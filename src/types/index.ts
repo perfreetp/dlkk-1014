@@ -63,12 +63,23 @@ export interface Task {
   promisedDate?: string;
 }
 
-export type NotificationMethod = 'sms' | 'call' | 'visit';
-export type NotificationResult = 'success' | 'failed' | 'pending' | 'promised';
+export type NotificationMethod = 'sms' | 'call' | 'visit' | 'system';
+export type NotificationResult = 'success' | 'failed' | 'pending' | 'promised' | 'info' | 'void' | 'adjusted';
+
+export type NotificationEventType =
+  | 'task_transition'
+  | 'bill_adjust'
+  | 'bill_void'
+  | 'bill_generate'
+  | 'receipt_record'
+  | 'receipt_discount'
+  | 'task_assign';
 
 export interface Notification {
   id: string;
   taskId?: string;
+  billId?: string;
+  receiptId?: string;
   ownerId: string;
   ownerName: string;
   method: NotificationMethod;
@@ -79,6 +90,9 @@ export interface Notification {
   content: string;
   fromStatus?: TaskStatus;
   toStatus?: TaskStatus;
+  eventType?: NotificationEventType;
+  oldValue?: string;
+  newValue?: string;
 }
 
 export type PaymentMethod = 'cash' | 'wechat' | 'alipay' | 'bank' | 'card';

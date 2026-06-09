@@ -4,7 +4,7 @@ import type {
   TaskType, NotificationMethod, NotificationResult, PaymentMethod, ReceiptBillAllocation,
 } from '@/types';
 import { mockOwners, mockBills, mockTasks, mockNotifications, mockReceipts, mockStaffs } from '@/data/mockData';
-import { generateId, todayStr, nowStr } from '@/utils/format';
+import { generateId, todayStr, nowStr, formatCurrency } from '@/utils/format';
 
 const STORAGE_KEY = 'property_debt_app_v1';
 
@@ -172,7 +172,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const bills = [newBill, ...state.bills];
       const ownerUpdate = get().recalcOwnerUnpaid(newBill.ownerId, bills);
       const owners = state.owners.map((o) => (o.id === newBill.ownerId ? { ...o, ...ownerUpdate } : o));
-      const newState = { bills, owners };
+      const op = state.staffs.find((s) => s.role === 'finance') || state.staffs[0];
+      const newNotification: Notification = {
+        id: generateId('N'),
+        billId: newBill.id,
+        ownerId: newBill.ownerId,
+        ownerName: newBill.ownerName,
+        method: 'system',
+        notifyDate: nowStr(),
+        result: 'info',
+        operatorId: op.id,
+        operatorName: op.name,
+        content: `生成账单【${newBill.period}】应收 ${formatCurrency(newBill.totalAmount)}（物业 ${formatCurrency(newBill.propertyFee)}，其余 ${formatCurrency(newBill.totalAmount - newBill.propertyFee)}）`,
+        eventType: 'bill_generate',
+      };
+      const newState = { bills, owners, notifications: [newNotification, ...state.notifications] };
       saveToStorage({ ...get(), ...newState });
       return newState;
     });
@@ -180,6 +194,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   updateBill: (id, data) => {
     set((state) => {
+      const oldBill = state.bills.find((b) => b.id === id);
       const bills = state.bills.map((b) => {
         if (b.id !== id) return b;
         const updated = { ...b, ...data };
@@ -190,7 +205,29 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const owners = target
         ? state.owners.map((o) => (o.id === target.ownerId ? { ...o, ...get().recalcOwnerUnpaid(o.id, bills) } : o))
         : state.owners;
-      const newState = { bills, owners };
+
+      let newNotifications = [...state.notifications];
+      if (target && oldBill && oldBill.totalAmount !== target.totalAmount) {
+        const op = state.staffs.find((s) => s.role === 'manager') || state.staffs[0];
+        const adjNotify: Notification = {
+          id: generateId('N'),
+          billId: target.id,
+          ownerId: target.ownerId,
+          ownerName: target.ownerName,
+          method: 'system',
+          notifyDate: nowStr(),
+          result: 'adjusted',
+          operatorId: op.id,
+          operatorName: op.name,
+          content: `调整账单【${target.period}】：${formatCurrency(oldBill.totalAmount)} → ${formatCurrency(target.totalAmount)}${target.remark ? `（原因：${target.remark}）` : ''}`,
+          eventType: 'bill_adjust',
+          oldValue: formatCurrency(oldBill.totalAmount),
+          newValue: formatCurrency(target.totalAmount),
+        };
+        newNotifications = [adjNotify, ...newNotifications];
+      }
+
+      const newState = { bills, owners, notifications: newNotifications };
       saveToStorage({ ...get(), ...newState });
       return newState;
     });
@@ -205,7 +242,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const owners = target
         ? state.owners.map((o) => (o.id === target.ownerId ? { ...o, ...get().recalcOwnerUnpaid(o.id, bills) } : o))
         : state.owners;
-      const newState = { bills, owners };
+
+      let newNotifications = [...state.notifications];
+      if (target) {
+        const op = state.staffs.find((s) => s.role === 'manager') || state.staffs[0];
+        const voidNotify: Notification = {
+          id: generateId('N'),
+          billId: target.id,
+          ownerId: target.ownerId,
+          ownerName: target.ownerName,
+          method: 'system',
+          notifyDate: nowStr(),
+          result: 'void',
+          operatorId: op.id,
+          operatorName: op.name,
+          content: `作废账单【${target.period}】原应收 ${formatCurrency(target.totalAmount)}${reason ? `（原因：${reason}）` : ''}`,
+          eventType: 'bill_void',
+        };
+        newNotifications = [voidNotify, ...newNotifications];
+      }
+
+      const newState = { bills, owners, notifications: newNotifications };
       saveToStorage({ ...get(), ...newState });
       return newState;
     });
@@ -227,11 +284,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   assignTask: (id, assigneeId, assigneeName, dueDate) => {
     set((state) => {
-      const newState = {
-        tasks: state.tasks.map((t) =>
-          t.id === id ? { ...t, assigneeId, assigneeName, dueDate, status: 'contacted' as Task['status'] } : t
-        ),
-      };
+      const task = state.tasks.find((t) => t.id === id);
+      const newTasks = state.tasks.map((t) =>
+        t.id === id ? { ...t, assigneeId, assigneeName, dueDate, status: 'contacted' as Task['status'] } : t
+      );
+      let newNotifications = [...state.notifications];
+      if (task) {
+        const op = state.staffs.find((s) => s.role === 'manager') || state.staffs[0];
+        newNotifications = [{
+          id: generateId('N'),
+          taskId: task.id,
+          ownerId: task.ownerId,
+          ownerName: task.ownerName,
+          method: 'system',
+          notifyDate: nowStr(),
+          result: 'info',
+          operatorId: op.id,
+          operatorName: op.name,
+          content: `分配催缴任务 → ${assigneeName}，跟进日期 ${dueDate}（欠费 ${formatCurrency(task.unpaidAmount)}）`,
+          eventType: 'task_assign',
+        }, ...newNotifications];
+      }
+      const newState = { tasks: newTasks, notifications: newNotifications };
       saveToStorage({ ...state, ...newState });
       return newState;
     });
@@ -266,6 +340,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         content,
         fromStatus,
         toStatus,
+        eventType: 'task_transition',
       };
       const newState = {
         tasks,
@@ -363,10 +438,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const ownerUpdate = get().recalcOwnerUnpaid(ownerId, bills);
       const owners = state.owners.map((o) => (o.id === ownerId ? { ...o, ...ownerUpdate } : o));
 
+      const receiptNotify: Notification = {
+        id: generateId('N'),
+        receiptId: newReceipt.id,
+        ownerId,
+        ownerName,
+        method: 'system',
+        notifyDate: nowStr(),
+        result: 'success',
+        operatorId,
+        operatorName,
+        content: `登记收款：实收 ${formatCurrency(totalPaid)}${totalDiscount > 0 ? `，减免 ${formatCurrency(totalDiscount)}` : ''}，核销 ${billSelections.length} 张账单（${billSelections.map((s) => s.bill.period).join('、')}）`,
+        eventType: totalDiscount > 0 ? 'receipt_discount' : 'receipt_record',
+        oldValue: totalDiscount > 0 ? formatCurrency(totalBillAmount) : undefined,
+        newValue: totalDiscount > 0 ? formatCurrency(totalPaid) : undefined,
+      };
+
       const newState = {
         receipts: [newReceipt, ...state.receipts],
         bills,
         owners,
+        notifications: [receiptNotify, ...state.notifications],
       };
       saveToStorage({ ...state, ...newState });
       return newState;

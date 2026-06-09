@@ -6,8 +6,8 @@ type BillStatus = 'unpaid' | 'partial' | 'paid' | 'void';
 type TaskType = 'sms' | 'call' | 'visit';
 type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 type TaskStatus = 'pending' | 'contacted' | 'promised' | 'need_visit' | 'completed' | 'cancelled';
-type NotificationMethod = 'sms' | 'call' | 'visit';
-type NotificationResult = 'success' | 'failed' | 'pending' | 'promised';
+type NotificationMethod = 'sms' | 'call' | 'visit' | 'system';
+type NotificationResult = 'success' | 'failed' | 'pending' | 'promised' | 'void' | 'info' | 'adjusted';
 type PaymentMethod = 'cash' | 'wechat' | 'alipay' | 'bank' | 'card';
 
 const ownerStatusConfig: Record<OwnerStatus, { label: string; className: string }> = {
@@ -49,6 +49,7 @@ const notifyMethodConfig: Record<NotificationMethod, { label: string; className:
   sms: { label: '短信', className: 'bg-blue-50 text-blue-700' },
   call: { label: '电话', className: 'bg-indigo-50 text-indigo-700' },
   visit: { label: '上门', className: 'bg-purple-50 text-purple-700' },
+  system: { label: '系统', className: 'bg-slate-100 text-slate-600' },
 };
 
 const notifyResultConfig: Record<NotificationResult, { label: string; className: string }> = {
@@ -56,6 +57,9 @@ const notifyResultConfig: Record<NotificationResult, { label: string; className:
   failed: { label: '失败', className: 'bg-danger-50 text-danger-500' },
   pending: { label: '待跟进', className: 'bg-slate-100 text-slate-600' },
   promised: { label: '已承诺', className: 'bg-warning-50 text-warning-600' },
+  void: { label: '已作废', className: 'bg-slate-100 text-slate-500' },
+  info: { label: '通知', className: 'bg-blue-50 text-blue-700' },
+  adjusted: { label: '已调整', className: 'bg-indigo-50 text-indigo-700' },
 };
 
 const paymentMethodConfig: Record<PaymentMethod, { label: string; icon: string }> = {

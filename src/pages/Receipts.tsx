@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Search, Download, Percent, Receipt, DollarSign, Banknote, XCircle, CheckSquare, Square, Wand2, Minus, ChevronDown, CheckCircle2 } from 'lucide-react';
+import { Plus, Search, Download, Percent, Receipt, DollarSign, Banknote, XCircle, CheckSquare, Square, Wand2, Minus, ChevronDown, ChevronUp, CheckCircle2, FileText } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -29,6 +29,7 @@ export const Receipts = () => {
   const [searchInput, setSearchInput] = useState('');
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | ''>('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
 
   const [ownerId, setOwnerId] = useState('');
   const [selectedBillIds, setSelectedBillIds] = useState<string[]>([]);
@@ -157,27 +158,46 @@ export const Receipts = () => {
     const ordered = [...ownerBills].sort((a, b) => (a.period > b.period ? 1 : -1));
     const next: BillSelectionMap = {};
     const selectedIds: string[] = [];
-    let remaining = Math.round(globalPayAmount * 100) / 100;
-    const totalDiscount = typeof globalDiscount === 'number' ? Math.round(globalDiscount * 100) / 100 : 0;
+    let remainingPay = Math.round(globalPayAmount * 100) / 100;
+    const globalDiscAmount = typeof globalDiscount === 'number' ? Math.round(globalDiscount * 100) / 100 : 0;
+    let remainingDiscount = globalDiscAmount;
 
     for (let i = 0; i < ordered.length; i++) {
       const b = ordered[i];
       const unpaid = Math.round((b.totalAmount - b.paidAmount) * 100) / 100;
-      if (remaining <= 0) {
-        next[b.id] = { allocation: 0, discount: 0 };
-        continue;
-      }
+      const isLast = i === ordered.length - 1;
+      const futureUnpaid = ordered.slice(i).reduce((s, x) => s + Math.round((x.totalAmount - x.paidAmount) * 100) / 100, 0);
+
       let billDiscount = 0;
-      if (totalDiscount > 0) {
-        const futureUnpaid = ordered.slice(i).reduce((s, x) => s + (x.totalAmount - x.paidAmount), 0);
-        billDiscount = futureUnpaid > 0 ? Math.round((totalDiscount * (unpaid / futureUnpaid)) * 100) / 100 : 0;
+      if (remainingDiscount > 0 && unpaid > 0 && futureUnpaid > 0) {
+        if (isLast) {
+          billDiscount = Math.min(remainingDiscount, unpaid);
+        } else {
+          const ratio = unpaid / futureUnpaid;
+          billDiscount = Math.min(
+            Math.round((remainingDiscount * ratio) * 100) / 100,
+            remainingDiscount,
+            unpaid
+          );
+        }
+        billDiscount = Math.round(billDiscount * 100) / 100;
       }
-      const effective = Math.max(0, unpaid - billDiscount);
-      const pay = Math.min(remaining, effective);
-      remaining = Math.round((remaining - pay) * 100) / 100;
-      next[b.id] = { allocation: Math.round(pay * 100) / 100, discount: Math.round(billDiscount * 100) / 100 };
+
+      let pay = 0;
+      if (remainingPay > 0 && unpaid > 0) {
+        const effective = Math.max(0, unpaid - billDiscount);
+        pay = isLast
+          ? Math.min(remainingPay, effective)
+          : Math.min(remainingPay, effective);
+        pay = Math.round(pay * 100) / 100;
+      }
+
+      remainingDiscount = Math.round((remainingDiscount - billDiscount) * 100) / 100;
+      remainingPay = Math.round((remainingPay - pay) * 100) / 100;
+      next[b.id] = { allocation: pay, discount: billDiscount };
       if (pay > 0 || billDiscount > 0) selectedIds.push(b.id);
     }
+
     setSelections(next);
     setSelectedBillIds(selectedIds);
   };
@@ -340,6 +360,7 @@ export const Receipts = () => {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-100 text-left text-xs font-semibold text-slate-600 uppercase">
+                  <th className="px-4 py-3 w-10"></th>
                   <th className="px-5 py-3">收款单号</th>
                   <th className="px-5 py-3">业主信息</th>
                   <th className="px-5 py-3 text-right">应收金额</th>
@@ -352,34 +373,112 @@ export const Receipts = () => {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r, i) => (
-                  <tr key={r.id} className="border-b border-slate-50 hover:bg-success-50/40 transition-colors animate-fade-in-stagger" style={{ animationDelay: `${i * 20}ms` }}>
-                    <td className="px-5 py-3.5">
-                      <span className="font-mono text-xs text-primary-700 font-semibold">{r.id.slice(-10).toUpperCase()}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <p className="font-medium text-slate-900">{r.ownerName}</p>
-                      <p className="text-xs text-slate-500">{r.building} {r.room}</p>
-                    </td>
-                    <td className="px-5 py-3.5 text-right text-slate-600 tabular-nums">{formatCurrency(r.totalBillAmount)}</td>
-                    <td className="px-5 py-3.5 text-right">
-                      {r.discount > 0
-                        ? <span className="text-danger-500 font-medium tabular-nums">-{formatCurrency(r.discount)}</span>
-                        : <span className="text-slate-300">—</span>
-                      }
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <span className="font-bold text-success-700 tabular-nums">{formatCurrency(r.amount)}</span>
-                    </td>
-                    <td className="px-5 py-3.5"><PaymentMethodTag method={r.method} /></td>
-                    <td className="px-5 py-3.5 text-slate-600">{r.operatorName}</td>
-                    <td className="px-5 py-3.5 text-xs text-slate-500 font-mono">{r.payDate.slice(5, 16)}</td>
-                    <td className="px-5 py-3.5 text-xs text-slate-500 max-w-[160px] truncate">{r.remark || '-'}</td>
-                  </tr>
-                ))}
+                {filtered.map((r, i) => {
+                  const expanded = expandedReceiptId === r.id;
+                  const allocations = r.allocations || [];
+                  return (
+                    <>
+                    <tr
+                      key={r.id}
+                      className={cn(
+                        'border-b border-slate-50 transition-colors animate-fade-in-stagger',
+                        expanded ? 'bg-primary-50/40' : 'hover:bg-success-50/40'
+                      )}
+                      style={{ animationDelay: `${i * 20}ms` }}
+                    >
+                      <td className="px-4 py-3.5">
+                        {allocations.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedReceiptId(expanded ? null : r.id)}
+                            className={cn(
+                              'w-7 h-7 rounded-md flex items-center justify-center transition-all',
+                              expanded ? 'bg-primary-100 text-primary-700' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                            )}
+                          >
+                            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="font-mono text-xs text-primary-700 font-semibold">{r.id.slice(-10).toUpperCase()}</span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <p className="font-medium text-slate-900">{r.ownerName}</p>
+                        <p className="text-xs text-slate-500">{r.building} {r.room}</p>
+                      </td>
+                      <td className="px-5 py-3.5 text-right text-slate-600 tabular-nums">{formatCurrency(r.totalBillAmount)}</td>
+                      <td className="px-5 py-3.5 text-right">
+                        {r.discount > 0
+                          ? <span className="text-danger-500 font-medium tabular-nums">-{formatCurrency(r.discount)}</span>
+                          : <span className="text-slate-300">—</span>
+                        }
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <span className="font-bold text-success-700 tabular-nums">{formatCurrency(r.amount)}</span>
+                      </td>
+                      <td className="px-5 py-3.5"><PaymentMethodTag method={r.method} /></td>
+                      <td className="px-5 py-3.5 text-slate-600">{r.operatorName}</td>
+                      <td className="px-5 py-3.5 text-xs text-slate-500 font-mono">{r.payDate.slice(5, 16)}</td>
+                      <td className="px-5 py-3.5 text-xs text-slate-500 max-w-[160px] truncate">{r.remark || '-'}</td>
+                    </tr>
+                    {expanded && allocations.length > 0 && (
+                      <tr key={`${r.id}-detail`} className="bg-slate-50/60 border-b border-slate-100">
+                        <td colSpan={10} className="px-8 py-4">
+                          <div className="rounded-lg border border-primary-100 bg-white overflow-hidden">
+                            <div className="px-4 py-2.5 bg-primary-50/70 border-b border-primary-100 flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-primary-600" />
+                              <p className="text-xs font-semibold text-primary-800">核销明细（共 {allocations.length} 张账单）</p>
+                            </div>
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">
+                                  <th className="px-4 py-2 text-left">账期</th>
+                                  <th className="px-4 py-2 text-right">原应收</th>
+                                  <th className="px-4 py-2 text-right">核销前待缴</th>
+                                  <th className="px-4 py-2 text-right">本次实收</th>
+                                  <th className="px-4 py-2 text-right">本次减免</th>
+                                  <th className="px-4 py-2 text-right">核销后余额</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {allocations.map((a) => {
+                                  const remain = Math.max(0, Math.round((a.billUnpaid - a.allocated - a.discount) * 100) / 100);
+                                  return (
+                                    <tr key={a.billId} className="border-t border-slate-50 even:bg-slate-50/30">
+                                      <td className="px-4 py-2.5 text-sm font-medium text-slate-800">{a.period}</td>
+                                      <td className="px-4 py-2.5 text-right text-slate-500 tabular-nums">{formatCurrency(a.billTotal)}</td>
+                                      <td className="px-4 py-2.5 text-right text-danger-600 tabular-nums font-medium">{formatCurrency(a.billUnpaid)}</td>
+                                      <td className="px-4 py-2.5 text-right text-success-700 tabular-nums font-semibold">+{formatCurrency(a.allocated)}</td>
+                                      <td className="px-4 py-2.5 text-right">
+                                        {a.discount > 0
+                                          ? <span className="text-warning-600 tabular-nums font-medium">-{formatCurrency(a.discount)}</span>
+                                          : <span className="text-slate-300">—</span>
+                                        }
+                                      </td>
+                                      <td className="px-4 py-2.5 text-right">
+                                        <span className={cn(
+                                          'tabular-nums font-semibold',
+                                          remain === 0 ? 'text-success-600' : 'text-warning-600'
+                                        )}>
+                                          {remain === 0 ? '已结清' : formatCurrency(remain)}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </>
+                  );
+                })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-5 py-16 text-center text-slate-400">暂无收款记录</td>
+                    <td colSpan={10} className="px-5 py-16 text-center text-slate-400">暂无收款记录</td>
                   </tr>
                 )}
               </tbody>

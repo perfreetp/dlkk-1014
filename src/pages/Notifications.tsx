@@ -68,12 +68,16 @@ export const Notifications = () => {
     promised: CheckCircle2,
     pending: Clock,
     failed: XCircle,
+    void: XCircle,
+    info: CalendarClock,
+    adjusted: CheckCircle2,
   };
 
   const methodIcons: Record<NotificationMethod, any> = {
     sms: MessageSquare,
     call: Phone,
     visit: Home,
+    system: CalendarClock,
   };
 
   return (

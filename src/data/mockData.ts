@@ -122,6 +122,9 @@ const notifyContents: Record<Notification['result'], string[]> = {
   failed: ['电话无人接听', '业主挂断电话', '上门无人在家', '空号无法联系'],
   pending: ['正在处理中', '业主需要和家人商量'],
   promised: ['承诺月底前一次性缴清', '约定下周三到物业前台缴费'],
+  void: ['账单已作废', '该账单已取消'],
+  info: ['系统通知', '自动提醒消息'],
+  adjusted: ['账单金额已调整', '费用已重新核算'],
 };
 
 export const mockNotifications: Notification[] = Array.from({ length: 50 }, (_, i) => {

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, Filter, X, ChevronDown, Eye, Phone, FileText, Receipt, MessageSquare, Clock, CalendarDays, AlertCircle, CheckCircle2, TrendingUp } from 'lucide-react';
+import { Search, Filter, X, ChevronDown, ChevronUp, Eye, Phone, FileText, Receipt, MessageSquare, Clock, CalendarDays, AlertCircle, CheckCircle2, TrendingUp, Users } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
@@ -375,7 +375,7 @@ export const Owners = () => {
 type TimelineEvent =
   | { type: 'bill'; id: string; sortKey: string; bill: import('@/types').Bill }
   | { type: 'receipt'; id: string; sortKey: string; receipt: import('@/types').Receipt }
-  | { type: 'notification'; id: string; sortKey: string; notification: import('@/types').Notification; task?: import('@/types').Task };
+  | { type: 'notification'; id: string; sortKey: string; notification: import('@/types').Notification; task?: import('@/types').Task; relatedBill?: import('@/types').Bill; relatedReceipt?: import('@/types').Receipt };
 
 const statusTextMap: Record<import('@/types').TaskStatus, string> = {
   pending: '待处理',
@@ -394,12 +394,14 @@ const OwnerTimeline = ({
   notifications: import('@/types').Notification[];
   tasks: import('@/types').Task[];
 }) => {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const toggleExpanded = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
   const events = useMemo(() => {
     const list: TimelineEvent[] = [];
     for (const b of bills) {
       list.push({
         type: 'bill',
-        id: b.id,
+        id: 'b_' + b.id,
         sortKey: b.generateDate + '_00',
         bill: b,
       });
@@ -407,7 +409,7 @@ const OwnerTimeline = ({
     for (const r of receipts) {
       list.push({
         type: 'receipt',
-        id: r.id,
+        id: 'r_' + r.id,
         sortKey: r.payDate.replace(' ', '_') + '_01',
         receipt: r,
       });
@@ -415,10 +417,12 @@ const OwnerTimeline = ({
     for (const n of notifications) {
       list.push({
         type: 'notification',
-        id: n.id,
+        id: 'n_' + n.id,
         sortKey: n.notifyDate.replace(' ', '_') + '_02',
         notification: n,
         task: tasks.find((t) => t.id === n.taskId),
+        relatedBill: bills.find((b) => b.id === n.billId),
+        relatedReceipt: receipts.find((r) => r.id === n.receiptId),
       });
     }
     return list.sort((a, b) => (a.sortKey < b.sortKey ? 1 : -1));
@@ -440,6 +444,7 @@ const OwnerTimeline = ({
         if (ev.type === 'bill') {
           const b = ev.bill;
           const voided = b.status === 'void';
+          const expanded = expandedId === ev.id;
           return (
             <div key={ev.id} className="relative pl-8 animate-fade-in-stagger" style={{ animationDelay: `${i * 15}ms` }}>
               <div className={cn(
@@ -448,15 +453,32 @@ const OwnerTimeline = ({
               )}>
                 <FileText className="w-3 h-3 text-white" />
               </div>
-              <div className="p-3 rounded-lg border border-slate-100 bg-white hover:bg-slate-50/60 transition-colors">
+              <div
+                className={cn(
+                  'p-3 rounded-lg border bg-white hover:bg-slate-50/60 transition-colors cursor-pointer',
+                  expanded ? 'border-primary-200 bg-primary-50/30' : 'border-slate-100'
+                )}
+                onClick={() => toggleExpanded(ev.id)}
+              >
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-medium text-slate-800">{b.period} 账期账单</span>
                     <BillStatusBadge status={b.status} />
                   </div>
-                  <div className="flex items-center gap-1 text-[11px] text-slate-400 shrink-0">
-                    <CalendarDays className="w-3 h-3" />
-                    <span>{b.generateDate}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                      <CalendarDays className="w-3 h-3" />
+                      <span>{b.generateDate}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={cn(
+                        'w-6 h-6 rounded-md flex items-center justify-center transition-all',
+                        expanded ? 'bg-primary-100 text-primary-700' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                      )}
+                    >
+                      {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-[11px]">
@@ -475,6 +497,34 @@ const OwnerTimeline = ({
                     </p>
                   </div>
                 </div>
+                {expanded && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <div className="rounded-lg border border-primary-100 bg-white overflow-hidden">
+                      <div className="px-3 py-2 bg-primary-50/70 border-b border-primary-100 flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-primary-600" />
+                        <p className="text-[11px] font-semibold text-primary-800">费用拆分</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 p-3 text-[11px]">
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">物业费</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(b.propertyFee)}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">水费</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(b.waterFee)}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">电费</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(b.electricFee)}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">其它</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(b.otherFee)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {b.remark && (
                   <div className="mt-2 pt-2 border-t border-slate-50 text-[11px] text-slate-500">
                     💬 {b.remark}
@@ -486,17 +536,38 @@ const OwnerTimeline = ({
         }
         if (ev.type === 'receipt') {
           const r = ev.receipt;
+          const expanded = expandedId === ev.id;
+          const allocations = r.allocations || [];
           return (
             <div key={ev.id} className="relative pl-8 animate-fade-in-stagger" style={{ animationDelay: `${i * 15}ms` }}>
               <div className="absolute left-0 top-1.5 w-5 h-5 rounded-full bg-success-500 flex items-center justify-center shadow-sm ring-4 ring-white">
                 <Receipt className="w-3 h-3 text-white" />
               </div>
-              <div className="p-3 rounded-lg border border-success-100 bg-gradient-to-br from-success-50/60 to-white hover:from-success-50 transition-colors">
+              <div
+                className={cn(
+                  'p-3 rounded-lg border bg-gradient-to-br hover:from-success-50 transition-colors cursor-pointer',
+                  expanded ? 'border-success-300 from-success-100/70 to-white' : 'border-success-100 from-success-50/60 to-white'
+                )}
+                onClick={() => toggleExpanded(ev.id)}
+              >
                 <div className="flex items-start justify-between gap-2 mb-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-semibold text-success-800">✓ 收款登记</span>
                   </div>
-                  <span className="text-[11px] text-slate-400 shrink-0 font-mono">{r.payDate.slice(5, 16)}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[11px] text-slate-400 font-mono">{r.payDate.slice(5, 16)}</span>
+                    {allocations.length > 0 && (
+                      <button
+                        type="button"
+                        className={cn(
+                          'w-6 h-6 rounded-md flex items-center justify-center transition-all',
+                          expanded ? 'bg-success-100 text-success-700' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                        )}
+                      >
+                        {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-[11px]">
                   <div>
@@ -518,6 +589,48 @@ const OwnerTimeline = ({
                   <span>操作人：{r.operatorName}</span>
                   <span className="font-mono">{r.id.slice(-6).toUpperCase()}</span>
                 </div>
+                {expanded && allocations.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-success-100/70">
+                    <div className="rounded-lg border border-success-100 bg-white overflow-hidden">
+                      <div className="px-3 py-2 bg-success-50/70 border-b border-success-100 flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-success-600" />
+                        <p className="text-[11px] font-semibold text-success-800">核销明细（共 {allocations.length} 张账单）</p>
+                      </div>
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">
+                            <th className="px-3 py-1.5 text-left">账期</th>
+                            <th className="px-3 py-1.5 text-right">原应收</th>
+                            <th className="px-3 py-1.5 text-right">核销前待缴</th>
+                            <th className="px-3 py-1.5 text-right">本次实收</th>
+                            <th className="px-3 py-1.5 text-right">本次减免</th>
+                            <th className="px-3 py-1.5 text-right">核销后余额</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allocations.map((a) => {
+                            const remain = Math.max(0, Math.round((a.billUnpaid - a.allocated - a.discount) * 100) / 100);
+                            return (
+                              <tr key={a.billId} className="border-t border-slate-50 even:bg-slate-50/30">
+                                <td className="px-3 py-2 font-medium text-slate-800">{a.period}</td>
+                                <td className="px-3 py-2 text-right text-slate-500 tabular-nums">{formatCurrency(a.billTotal)}</td>
+                                <td className="px-3 py-2 text-right text-danger-600 tabular-nums font-medium">{formatCurrency(a.billUnpaid)}</td>
+                                <td className="px-3 py-2 text-right text-success-700 tabular-nums font-semibold">+{formatCurrency(a.allocated)}</td>
+                                <td className="px-3 py-2 text-right">
+                                  {a.discount > 0
+                                    ? <span className="text-warning-600 tabular-nums font-medium">-{formatCurrency(a.discount)}</span>
+                                    : <span className="text-slate-300">-</span>
+                                  }
+                                </td>
+                                <td className="px-3 py-2 text-right text-slate-700 tabular-nums font-semibold">{formatCurrency(remain)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
                 {r.remark && (
                   <div className="mt-1.5 pt-1.5 border-t border-success-100/70 text-[11px] text-slate-500">
                     💬 {r.remark}
@@ -529,18 +642,103 @@ const OwnerTimeline = ({
         }
         const n = ev.notification;
         const t = ev.task;
+        const rb = ev.relatedBill;
+        const rr = ev.relatedReceipt;
+        const et = n.eventType;
+        const expanded = expandedId === ev.id;
+
+        let titleText = '📞 催缴沟通';
+        let titleColor = 'text-primary-800';
+        let dotBg = 'bg-primary-600';
+        let DotIcon: any = MessageSquare;
+        let methodTag: { label: string; bg: string } | null = null;
+        let hoverBg = 'hover:bg-primary-50/30';
+        let expandedBorder = 'border-primary-200 bg-primary-50/30';
+        let canExpand = false;
+
+        if (et?.startsWith('bill_')) {
+          dotBg = 'bg-blue-500';
+          titleColor = 'text-blue-800';
+          hoverBg = 'hover:bg-blue-50/40';
+          expandedBorder = 'border-blue-200 bg-blue-50/30';
+          DotIcon = FileText;
+          if (et === 'bill_generate') {
+            titleText = '📄 生成账单';
+            methodTag = { label: '生成', bg: 'bg-blue-500' };
+          } else if (et === 'bill_adjust') {
+            titleText = '✏️ 调整账单';
+            methodTag = { label: '调整', bg: 'bg-blue-600' };
+          } else if (et === 'bill_void') {
+            titleText = '🚫 作废账单';
+            methodTag = { label: '作废', bg: 'bg-slate-500' };
+          }
+          if (rb) canExpand = true;
+        } else if (et?.startsWith('receipt_')) {
+          dotBg = 'bg-success-500';
+          titleColor = 'text-success-800';
+          hoverBg = 'hover:bg-success-50/40';
+          expandedBorder = 'border-success-200 bg-success-50/30';
+          DotIcon = Receipt;
+          if (et === 'receipt_record') {
+            titleText = '💰 登记收款';
+            methodTag = { label: '收款', bg: 'bg-success-500' };
+          } else if (et === 'receipt_discount') {
+            titleText = '💸 减免收款';
+            methodTag = { label: '减免', bg: 'bg-warning-500' };
+          }
+          if (rr && rr.allocations && rr.allocations.length > 0) canExpand = true;
+        } else if (et?.startsWith('task_')) {
+          dotBg = 'bg-indigo-500';
+          titleColor = 'text-indigo-800';
+          hoverBg = 'hover:bg-indigo-50/40';
+          expandedBorder = 'border-indigo-200 bg-indigo-50/30';
+          if (et === 'task_assign') {
+            titleText = '📋 分配任务';
+            DotIcon = Users;
+            methodTag = { label: '分配', bg: 'bg-indigo-500' };
+          } else if (et === 'task_transition') {
+            titleText = '📞 催缴跟进';
+            DotIcon = MessageSquare;
+            methodTag = { label: '跟进', bg: 'bg-indigo-600' };
+          }
+          if (et === 'task_transition' && t) canExpand = true;
+        } else {
+          dotBg = 'bg-purple-500';
+          titleColor = 'text-purple-800';
+          hoverBg = 'hover:bg-purple-50/40';
+          expandedBorder = 'border-purple-200 bg-purple-50/30';
+          DotIcon = MessageSquare;
+          titleText = '📞 催缴沟通';
+        }
+
+        if (n.method !== 'system' && !methodTag) {
+          methodTag = n.method === 'sms'
+            ? { label: '短信', bg: 'bg-blue-500' }
+            : n.method === 'call'
+            ? { label: '电话', bg: 'bg-indigo-500' }
+            : { label: '上门', bg: 'bg-purple-500' };
+        }
+
         return (
           <div key={ev.id} className="relative pl-8 animate-fade-in-stagger" style={{ animationDelay: `${i * 15}ms` }}>
             <div className={cn(
               'absolute left-0 top-1.5 w-5 h-5 rounded-full flex items-center justify-center shadow-sm ring-4 ring-white',
-              n.result === 'success' ? 'bg-primary-600' : n.result === 'promised' ? 'bg-warning-500' : n.result === 'failed' ? 'bg-danger-500' : 'bg-blue-500'
+              dotBg
             )}>
-              <MessageSquare className="w-3 h-3 text-white" />
+              <DotIcon className="w-3 h-3 text-white" />
             </div>
-            <div className="p-3 rounded-lg border border-slate-100 bg-white hover:bg-primary-50/30 transition-colors">
+            <div
+              className={cn(
+                'p-3 rounded-lg border bg-white transition-colors',
+                expanded ? expandedBorder : 'border-slate-100',
+                hoverBg,
+                'cursor-pointer'
+              )}
+              onClick={() => toggleExpanded(ev.id)}
+            >
               <div className="flex items-start justify-between gap-2 mb-1.5">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs font-semibold text-primary-800">催缴沟通</span>
+                  <span className={cn('text-xs font-semibold', titleColor)}>{titleText}</span>
                   {n.fromStatus && n.toStatus && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary-50 text-[10px] text-primary-700 font-medium">
                       {statusTextMap[n.fromStatus]}
@@ -550,27 +748,185 @@ const OwnerTimeline = ({
                   )}
                   {t && <TaskStatusBadge status={t.status} />}
                 </div>
-                <span className="text-[11px] text-slate-400 shrink-0 font-mono">{n.notifyDate.slice(5, 16)}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] text-slate-400 font-mono">{n.notifyDate.slice(5, 16)}</span>
+                  {canExpand && (
+                    <button
+                      type="button"
+                      className={cn(
+                        'w-6 h-6 rounded-md flex items-center justify-center transition-all',
+                        expanded ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                      )}
+                    >
+                      {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2 mb-1.5 text-[11px]">
-                <span className={cn(
-                  'px-1.5 py-0.5 rounded text-white font-medium',
-                  n.method === 'sms' ? 'bg-blue-500' : n.method === 'call' ? 'bg-indigo-500' : 'bg-purple-500'
-                )}>
-                  {n.method === 'sms' ? '短信' : n.method === 'call' ? '电话' : '上门'}
-                </span>
+                {methodTag && (
+                  <span className={cn(
+                    'px-1.5 py-0.5 rounded text-white font-medium',
+                    methodTag.bg
+                  )}>
+                    {methodTag.label}
+                  </span>
+                )}
                 <span className={cn(
                   'px-1.5 py-0.5 rounded font-medium',
                   n.result === 'success' ? 'bg-success-100 text-success-700'
                   : n.result === 'promised' ? 'bg-warning-100 text-warning-700'
                   : n.result === 'failed' ? 'bg-danger-100 text-danger-700'
+                  : n.result === 'info' ? 'bg-blue-100 text-blue-700'
+                  : n.result === 'adjusted' ? 'bg-indigo-100 text-indigo-700'
+                  : n.result === 'void' ? 'bg-slate-100 text-slate-600'
                   : 'bg-slate-100 text-slate-700'
                 )}>
-                  {n.result === 'success' ? '成功' : n.result === 'promised' ? '承诺缴费' : n.result === 'failed' ? '失败' : '待跟进'}
+                  {n.result === 'success' ? '成功' : n.result === 'promised' ? '承诺缴费' : n.result === 'failed' ? '失败' : n.result === 'info' ? '通知' : n.result === 'adjusted' ? '已调整' : n.result === 'void' ? '已作废' : '待跟进'}
                 </span>
                 <span className="text-slate-500">{n.operatorName}</span>
               </div>
               <p className="text-xs text-slate-700 leading-relaxed">{n.content}</p>
+              {expanded && et?.startsWith('receipt_') && rr && rr.allocations && rr.allocations.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <div className="rounded-lg border border-success-100 bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-success-50/70 border-b border-success-100 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-success-600" />
+                      <p className="text-[11px] font-semibold text-success-800">核销明细（共 {rr.allocations.length} 张账单）</p>
+                    </div>
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">
+                          <th className="px-3 py-1.5 text-left">账期</th>
+                          <th className="px-3 py-1.5 text-right">原应收</th>
+                          <th className="px-3 py-1.5 text-right">核销前待缴</th>
+                          <th className="px-3 py-1.5 text-right">本次实收</th>
+                          <th className="px-3 py-1.5 text-right">本次减免</th>
+                          <th className="px-3 py-1.5 text-right">核销后余额</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rr.allocations.map((a) => {
+                          const remain = Math.max(0, Math.round((a.billUnpaid - a.allocated - a.discount) * 100) / 100);
+                          return (
+                            <tr key={a.billId} className="border-t border-slate-50 even:bg-slate-50/30">
+                              <td className="px-3 py-2 font-medium text-slate-800">{a.period}</td>
+                              <td className="px-3 py-2 text-right text-slate-500 tabular-nums">{formatCurrency(a.billTotal)}</td>
+                              <td className="px-3 py-2 text-right text-danger-600 tabular-nums font-medium">{formatCurrency(a.billUnpaid)}</td>
+                              <td className="px-3 py-2 text-right text-success-700 tabular-nums font-semibold">+{formatCurrency(a.allocated)}</td>
+                              <td className="px-3 py-2 text-right">
+                                {a.discount > 0
+                                  ? <span className="text-warning-600 tabular-nums font-medium">-{formatCurrency(a.discount)}</span>
+                                  : <span className="text-slate-300">-</span>
+                                }
+                              </td>
+                              <td className="px-3 py-2 text-right text-slate-700 tabular-nums font-semibold">{formatCurrency(remain)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {expanded && et?.startsWith('bill_') && rb && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <div className="rounded-lg border border-blue-100 bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-blue-50/70 border-b border-blue-100 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-blue-600" />
+                      <p className="text-[11px] font-semibold text-blue-800">{rb.period} 账单概览</p>
+                    </div>
+                    <div className="p-3">
+                      <div className="grid grid-cols-3 gap-2 text-[11px] mb-3">
+                        <div>
+                          <p className="text-slate-400">应收</p>
+                          <p className="font-semibold text-slate-700 tabular-nums">{formatCurrency(rb.totalAmount)}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-400">已缴</p>
+                          <p className="font-semibold text-success-600 tabular-nums">{formatCurrency(rb.paidAmount)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-slate-400">{rb.status === 'void' ? '作废' : '待缴'}</p>
+                          <p className={cn('font-bold tabular-nums', rb.status === 'void' ? 'text-slate-400 line-through' : 'text-danger-500')}>
+                            {formatCurrency(Math.max(0, rb.totalAmount - rb.paidAmount))}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">物业费</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(rb.propertyFee)}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">水费</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(rb.waterFee)}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">电费</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(rb.electricFee)}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">其它</span>
+                          <span className="font-semibold text-slate-700 tabular-nums">{formatCurrency(rb.otherFee)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {expanded && et === 'task_transition' && t && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <div className="rounded-lg border border-indigo-100 bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-indigo-50/70 border-b border-indigo-100 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                      <p className="text-[11px] font-semibold text-indigo-800">任务详情</p>
+                    </div>
+                    <div className="p-3 space-y-2 text-[11px]">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">任务类型</span>
+                          <span className="font-medium text-slate-700">{t.type === 'sms' ? '短信催缴' : t.type === 'call' ? '电话催缴' : '上门催缴'}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">优先级</span>
+                          <span className={cn(
+                            'font-medium',
+                            t.priority === 'urgent' ? 'text-danger-600'
+                            : t.priority === 'high' ? 'text-warning-600'
+                            : t.priority === 'medium' ? 'text-primary-600'
+                            : 'text-slate-600'
+                          )}>
+                            {t.priority === 'urgent' ? '紧急' : t.priority === 'high' ? '高' : t.priority === 'medium' ? '中' : '低'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">到期日期</span>
+                          <span className="font-medium text-slate-700">{t.dueDate}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">欠费金额</span>
+                          <span className="font-bold text-danger-600 tabular-nums">{formatCurrency(t.unpaidAmount)}</span>
+                        </div>
+                      </div>
+                      {t.assigneeName && (
+                        <div className="flex items-center justify-between p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500">负责人</span>
+                          <span className="font-medium text-slate-700">{t.assigneeName}</span>
+                        </div>
+                      )}
+                      {t.remark && (
+                        <div className="p-2 rounded bg-slate-50/50">
+                          <span className="text-slate-500 block mb-0.5">备注</span>
+                          <span className="text-slate-700 leading-relaxed">{t.remark}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );

@@ -132,9 +132,17 @@ export const Reports = () => {
       .sort((a, b) => b['完成任务'] - a['完成任务']);
   }, [staffs, tasks, notifications, receipts, owners, selectedStaffs, selectedBuildings]);
 
-  const resetBuildingFilters = () => setSelectedBuildings(allBuildings);
-  const resetStaffFilters = () => setSelectedStaffs(allStaffs);
-  const resetMonthlyFilters = () => { setMonthStart('2026-01'); setMonthEnd('2026-06'); setSelectedBuildings(allBuildings); };
+  const resetAllFilters = () => {
+    setSelectedBuildings(allBuildings);
+    setSelectedStaffs(allStaffs);
+    setMonthStart('2026-01');
+    setMonthEnd('2026-06');
+  };
+
+  const filterMonthRangeStr = `${monthStart.replace('2026-', '')}月 ~ ${monthEnd.replace('2026-', '')}月`;
+  const filterBuildingCount = selectedBuildings.length;
+  const filterStaffCount = selectedStaffs.length;
+  const hasActiveFilter = filterBuildingCount < allBuildings.length || filterStaffCount < allStaffs.length || monthStart !== '2026-01' || monthEnd !== '2026-06';
 
   const exportBuilding = () => {
     downloadCSV(
@@ -177,7 +185,21 @@ export const Reports = () => {
             <div>
               <p className="text-xs text-slate-500">覆盖楼栋</p>
               <p className="mt-1 text-2xl font-bold text-slate-900 font-serif tabular-nums">
-                {new Set(owners.map((o) => o.building)).size} 栋
+                {filterBuildingCount} 栋
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">共 {allBuildings.length} 栋</p>
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4 hoverable">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-success-50 flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-success-600" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">统计月份</p>
+              <p className="mt-1 text-xl font-bold text-slate-900 font-serif tabular-nums">
+                {filterMonthRangeStr}
               </p>
             </div>
           </div>
@@ -185,25 +207,16 @@ export const Reports = () => {
         <Card className="p-4 hoverable">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-warning-50 flex items-center justify-center">
-              <Calendar className="w-5 h-5 text-warning-500" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">统计月份</p>
-              <p className="mt-1 text-2xl font-bold text-slate-900 font-serif tabular-nums">6 个月</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-4 hoverable">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-success-50 flex items-center justify-center">
-              <TrendingUp className="w-5 h-5 text-success-600" />
+              <TrendingUp className="w-5 h-5 text-warning-500" />
             </div>
             <div>
               <p className="text-xs text-slate-500">平均收缴率</p>
-              <p className="mt-1 text-2xl font-bold text-success-700 font-serif tabular-nums">
-                {formatPercent(
-                  monthlyData.reduce((s, m) => s + m['收缴率'], 0) / monthlyData.length / 100
-                )}
+              <p className="mt-1 text-2xl font-bold text-warning-600 font-serif tabular-nums">
+                {(() => {
+                  const totalBilled = buildingData.reduce((s, d) => s + d['应收金额'], 0);
+                  const totalPaid = buildingData.reduce((s, d) => s + d['实收金额'], 0);
+                  return totalBilled > 0 ? formatPercent(totalPaid / totalBilled) : '—';
+                })()}
               </p>
             </div>
           </div>
@@ -211,13 +224,14 @@ export const Reports = () => {
         <Card className="p-4 hoverable">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-indigo-50 flex items-center justify-center">
-              <Users className="w-5 h-5 text-indigo-600" />
+              <Trophy className="w-5 h-5 text-indigo-600" />
             </div>
             <div>
               <p className="text-xs text-slate-500">考核人员</p>
               <p className="mt-1 text-2xl font-bold text-slate-900 font-serif tabular-nums">
-                {staffs.filter((s) => s.role === 'service').length} 人
+                {filterStaffCount} 人
               </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">共 {allStaffs.length} 人</p>
             </div>
           </div>
         </Card>
@@ -247,42 +261,103 @@ export const Reports = () => {
             })}
           </div>
           <div className="flex items-center gap-2 py-2">
+            {hasActiveFilter && (
+              <span className="px-2.5 h-7 rounded-md bg-primary-50 text-primary-700 text-[11px] font-medium border border-primary-100">
+                筛选生效中
+              </span>
+            )}
             <Button size="sm" variant="outline" icon={<FileSpreadsheet className="w-4 h-4" />} onClick={exportAll}>
               导出全部
             </Button>
           </div>
         </div>
 
+        <div className="p-4 border-b border-slate-100 bg-slate-50/40 space-y-3">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-slate-500 shrink-0" />
+              <span className="text-xs font-semibold text-slate-700">统一筛选条件</span>
+              <span className="text-[10px] text-slate-400">（楼栋汇总 / 月度趋势 / 人员考核 / 导出 CSV 共用）</span>
+            </div>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={resetAllFilters}
+              className="h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
+            >
+              <X className="w-3.5 h-3.5" /> 重置全部
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-5">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-slate-500" />
+              <span className="text-xs font-medium text-slate-600">月份范围：</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="month"
+                  value={monthStart}
+                  onChange={(e) => setMonthStart(e.target.value)}
+                  min="2026-01"
+                  max="2026-06"
+                  className="h-9 px-3 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400/30"
+                />
+                <span className="text-slate-400 text-sm">至</span>
+                <input
+                  type="month"
+                  value={monthEnd}
+                  onChange={(e) => setMonthEnd(e.target.value)}
+                  min="2026-01"
+                  max="2026-06"
+                  className="h-9 px-3 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400/30"
+                />
+              </div>
+            </div>
+            <div className="h-5 w-px bg-slate-200" />
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <Building2 className="w-4 h-4 text-slate-500" />
+              <span className="text-xs font-medium text-slate-600">楼栋：</span>
+              {allBuildings.map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => toggleBuilding(b)}
+                  className={cn(
+                    'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
+                    selectedBuildings.includes(b)
+                      ? 'bg-primary-800 text-white border-primary-800 shadow-sm'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                  )}
+                >
+                  {b}
+                </button>
+              ))}
+            </div>
+            <div className="h-5 w-px bg-slate-200" />
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <Users className="w-4 h-4 text-slate-500" />
+              <span className="text-xs font-medium text-slate-600">客服：</span>
+              {allStaffs.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => toggleStaff(s)}
+                  className={cn(
+                    'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
+                    selectedStaffs.includes(s)
+                      ? 'bg-indigo-700 text-white border-indigo-700 shadow-sm'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
         <CardBody className="space-y-6">
           {activeTab === 'building' && (
             <>
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-wrap items-center gap-2">
-                <Filter className="w-4 h-4 text-slate-500 shrink-0" />
-                <span className="text-xs font-medium text-slate-600 mr-1">筛选楼栋：</span>
-                {allBuildings.map((b) => (
-                  <button
-                    key={b}
-                    type="button"
-                    onClick={() => toggleBuilding(b)}
-                    className={cn(
-                      'px-2.5 h-8 rounded-lg text-xs font-medium border transition-all',
-                      selectedBuildings.includes(b)
-                        ? 'bg-primary-800 text-white border-primary-800'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
-                    )}
-                  >
-                    {b}
-                  </button>
-                ))}
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={resetBuildingFilters}
-                  className="h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
-                >
-                  <X className="w-3 h-3" /> 重置
-                </button>
-              </div>
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div>
                   <div className="flex items-center justify-between mb-3">
@@ -408,58 +483,6 @@ export const Reports = () => {
 
           {activeTab === 'monthly' && (
             <>
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span className="text-xs font-medium text-slate-600">月份范围：</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="month"
-                    value={monthStart}
-                    onChange={(e) => setMonthStart(e.target.value)}
-                    min="2026-01"
-                    max="2026-06"
-                    className="h-9 px-3 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400/30"
-                  />
-                  <span className="text-slate-400 text-sm">至</span>
-                  <input
-                    type="month"
-                    value={monthEnd}
-                    onChange={(e) => setMonthEnd(e.target.value)}
-                    min="2026-01"
-                    max="2026-06"
-                    className="h-9 px-3 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400/30"
-                  />
-                </div>
-                <div className="h-6 w-px bg-slate-200 mx-1" />
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-medium text-slate-600">楼栋：</span>
-                  {allBuildings.map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => toggleBuilding(b)}
-                      className={cn(
-                        'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
-                        selectedBuildings.includes(b)
-                          ? 'bg-primary-800 text-white border-primary-800'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
-                      )}
-                    >
-                      {b}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={resetMonthlyFilters}
-                  className="h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
-                >
-                  <X className="w-3 h-3" /> 重置
-                </button>
-              </div>
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-slate-900">月度缴费趋势</h4>
@@ -576,52 +599,6 @@ export const Reports = () => {
 
           {activeTab === 'staff' && (
             <>
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Filter className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span className="text-xs font-medium text-slate-600 mr-1">客服人员：</span>
-                  {allStaffs.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => toggleStaff(s)}
-                      className={cn(
-                        'px-2.5 h-8 rounded-lg text-xs font-medium border transition-all',
-                        selectedStaffs.includes(s)
-                          ? 'bg-primary-800 text-white border-primary-800'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
-                      )}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={resetStaffFilters}
-                    className="ml-2 h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
-                  >
-                    <X className="w-3 h-3" /> 重置人员
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-slate-600 w-16">楼栋范围：</span>
-                  {allBuildings.map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => toggleBuilding(b)}
-                      className={cn(
-                        'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
-                        selectedBuildings.includes(b)
-                          ? 'bg-indigo-700 text-white border-indigo-700'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
-                      )}
-                    >
-                      {b}
-                    </button>
-                  ))}
-                </div>
-              </div>
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-slate-900">人员任务完成情况</h4>
