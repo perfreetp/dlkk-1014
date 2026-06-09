@@ -42,6 +42,7 @@ export const Receipts = () => {
   const [remark, setRemark] = useState('');
   const [globalPayAmount, setGlobalPayAmount] = useState<number | ''>('');
   const [globalDiscount, setGlobalDiscount] = useState<number | ''>('');
+  const [submitError, setSubmitError] = useState('');
 
   const filtered = useMemo(() => {
     return receipts.filter((r) => {
@@ -144,17 +145,35 @@ export const Receipts = () => {
     const rounded = Math.round(val * 100) / 100;
     const bill = ownerBills.find((b) => b.id === billId);
     const unpaid = bill ? Math.round((bill.totalAmount - bill.paidAmount) * 100) / 100 : 0;
-    let finalAlloc = rounded;
-    if (field === 'allocation') {
-      finalAlloc = Math.min(rounded, unpaid);
-    }
-    setSelections((s) => ({
-      ...s,
-      [billId]: {
-        ...(s[billId] || { allocation: 0, discount: 0 }),
-        [field]: finalAlloc,
-      },
-    }));
+    setSelections((s) => {
+      const current = s[billId] || { allocation: 0, discount: 0 };
+      let newAllocation = field === 'allocation' ? rounded : current.allocation;
+      let newDiscount = field === 'discount' ? rounded : current.discount;
+      const maxForAlloc = Math.max(0, Math.round((unpaid - newDiscount) * 100) / 100);
+      const maxForDisc = Math.max(0, Math.round((unpaid - newAllocation) * 100) / 100);
+      if (field === 'allocation') {
+        newAllocation = Math.min(newAllocation, maxForAlloc);
+      } else {
+        newDiscount = Math.min(newDiscount, maxForDisc);
+      }
+      const totalApplied = newAllocation + newDiscount;
+      if (totalApplied > unpaid) {
+        const ratio = unpaid / totalApplied;
+        newAllocation = Math.round(newAllocation * ratio * 100) / 100;
+        newDiscount = Math.round(newDiscount * ratio * 100) / 100;
+        const finalTotal = newAllocation + newDiscount;
+        if (finalTotal > unpaid) {
+          newDiscount = Math.round((unpaid - newAllocation) * 100) / 100;
+        }
+      }
+      return {
+        ...s,
+        [billId]: {
+          allocation: newAllocation,
+          discount: newDiscount,
+        },
+      };
+    });
   };
 
   const runAutoAllocation = () => {
@@ -187,19 +206,40 @@ export const Receipts = () => {
         billDiscount = Math.round(billDiscount * 100) / 100;
       }
 
-      let pay = 0;
+      let allocation = 0;
       if (remainingPay > 0 && unpaid > 0) {
         const effective = Math.max(0, unpaid - billDiscount);
-        pay = isLast
+        allocation = isLast
           ? Math.min(remainingPay, effective)
           : Math.min(remainingPay, effective);
-        pay = Math.round(pay * 100) / 100;
+        allocation = Math.round(allocation * 100) / 100;
       }
 
+      const totalApplied = allocation + billDiscount;
+      if (totalApplied > unpaid) {
+        const ratio = unpaid / totalApplied;
+        allocation = Math.round(allocation * ratio * 100) / 100;
+        billDiscount = Math.round(billDiscount * ratio * 100) / 100;
+      }
+      if (isLast) {
+        const finalTotal = allocation + billDiscount;
+        const target = Math.min(totalApplied, unpaid);
+        if (Math.abs(finalTotal - target) > 0.01) {
+          billDiscount = Math.round((target - allocation) * 100) / 100;
+          if (billDiscount < 0) {
+            allocation = Math.round((target) * 100) / 100;
+            billDiscount = 0;
+          }
+        }
+      }
+
+      allocation = Math.round(allocation * 100) / 100;
+      billDiscount = Math.round(billDiscount * 100) / 100;
+
       remainingDiscount = Math.round((remainingDiscount - billDiscount) * 100) / 100;
-      remainingPay = Math.round((remainingPay - pay) * 100) / 100;
-      next[b.id] = { allocation: pay, discount: billDiscount };
-      if (pay > 0 || billDiscount > 0) selectedIds.push(b.id);
+      remainingPay = Math.round((remainingPay - allocation) * 100) / 100;
+      next[b.id] = { allocation, discount: billDiscount };
+      if (allocation > 0 || billDiscount > 0) selectedIds.push(b.id);
     }
 
     setSelections(next);
@@ -239,9 +279,11 @@ export const Receipts = () => {
     setRemark('');
     setGlobalPayAmount('');
     setGlobalDiscount('');
+    setSubmitError('');
   };
 
   const handleCreate = () => {
+    setSubmitError('');
     if (!selectedOwner || !canSubmit) return;
     const billSelections = selectedBillIds
       .map((bid) => {
@@ -252,6 +294,15 @@ export const Receipts = () => {
       })
       .filter(Boolean) as Array<{ bill: Bill; allocation: number; discount: number }>;
     if (billSelections.length === 0) return;
+
+    for (const s of billSelections) {
+      const unpaid = Math.round((s.bill.totalAmount - s.bill.paidAmount) * 100) / 100;
+      if (s.allocation + s.discount > unpaid + 0.01) {
+        setSubmitError(`${s.bill.period} 账单核销超额：实收+减免(${formatCurrency(s.allocation + s.discount)}) > 待缴(${formatCurrency(unpaid)})`);
+        alert(`${s.bill.period} 账单核销超额：实收+减免(${formatCurrency(s.allocation + s.discount)}) > 待缴(${formatCurrency(unpaid)})`);
+        return;
+      }
+    }
 
     const op = staffs.find((s) => s.role === 'finance') || staffs[0];
     addReceiptDetailed({
@@ -523,6 +574,12 @@ export const Receipts = () => {
         }
       >
         <div className="space-y-5">
+          {submitError && (
+            <div className="p-3 rounded-lg bg-danger-50 border border-danger-200 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-danger-600 flex-shrink-0" />
+              <p className="text-sm text-danger-700 font-medium">{submitError}</p>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1.5">选择业主 <span className="text-danger-500">*</span></label>
@@ -655,6 +712,11 @@ export const Receipts = () => {
                       const alloc = Math.round(sel.allocation * 100) / 100;
                       const disc = Math.round(sel.discount * 100) / 100;
                       const remain = Math.round(Math.max(0, unpaid - alloc - disc) * 100) / 100;
+                      const maxAlloc = Math.max(0, Math.round((unpaid - disc) * 100) / 100);
+                      const maxDisc = Math.max(0, Math.round((unpaid - alloc) * 100) / 100);
+                      const totalApplied = alloc + disc;
+                      const isOver = totalApplied > unpaid + 0.01;
+                      const isOk = totalApplied <= unpaid;
                       return (
                         <tr key={b.id} className={cn('border-t border-slate-100 transition-colors', checked && 'bg-primary-50/30')}>
                           <td className="px-4 py-3">
@@ -674,20 +736,30 @@ export const Receipts = () => {
                           <td className="px-4 py-3 text-right text-slate-500 tabular-nums">{formatCurrency(b.paidAmount)}</td>
                           <td className="px-4 py-3 text-right font-semibold text-danger-500 tabular-nums">{formatCurrency(unpaid)}</td>
                           <td className="px-4 py-3 text-right">
-                            <input
-                              type="number"
-                              disabled={!checked}
-                              value={alloc}
-                              onChange={(e) => updateSelection(b.id, 'allocation', e.target.value)}
-                              step="0.01"
-                              min={0}
-                              max={unpaid}
-                              className={cn(
-                                'w-28 h-8 px-2 rounded-md border text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-400/30 transition-all',
-                                checked ? 'border-primary-200 bg-white focus:border-primary-400 text-slate-900 font-semibold' : 'border-slate-200 bg-slate-50 text-slate-400'
+                            <div className="flex flex-col items-end gap-1">
+                              <input
+                                type="number"
+                                disabled={!checked}
+                                value={alloc}
+                                onChange={(e) => updateSelection(b.id, 'allocation', e.target.value)}
+                                step="0.01"
+                                min={0}
+                                max={maxAlloc}
+                                className={cn(
+                                  'w-28 h-8 px-2 rounded-md border text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-400/30 transition-all',
+                                  checked ? 'border-primary-200 bg-white focus:border-primary-400 text-slate-900 font-semibold' : 'border-slate-200 bg-slate-50 text-slate-400'
+                                )}
+                                placeholder="0.00"
+                              />
+                              {checked && (
+                                <p className={cn(
+                                  'text-[10px] font-medium tabular-nums',
+                                  isOver ? 'text-danger-600' : isOk ? 'text-success-600' : 'text-slate-500'
+                                )}>
+                                  {isOver ? '⚠️ ' : ''}本次实收+减免 ≤ 待缴 ¥{unpaid.toFixed(2)}
+                                </p>
                               )}
-                              placeholder="0.00"
-                            />
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <input
@@ -697,6 +769,7 @@ export const Receipts = () => {
                               onChange={(e) => updateSelection(b.id, 'discount', e.target.value)}
                               step="0.01"
                               min={0}
+                              max={maxDisc}
                               className={cn(
                                 'w-24 h-8 px-2 rounded-md border text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-warning-400/30 transition-all',
                                 checked ? 'border-warning-200 bg-warning-50/30 focus:border-warning-400 text-warning-700 font-medium' : 'border-slate-200 bg-slate-50 text-slate-400'

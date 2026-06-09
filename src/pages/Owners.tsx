@@ -431,76 +431,100 @@ const OwnerFinanceSummary = ({
 
   const monthlyData = useMemo(() => {
     const monthMap = new Map<string, {
-      billed: number; received: number; discount: number; voided: number;
+      billed: number; received: number; discount: number;
       bills: import('@/types').Bill[]; receipts: import('@/types').Receipt[];
     }>();
 
     for (const b of ownerBills) {
       if (!monthMap.has(b.period)) {
-        monthMap.set(b.period, { billed: 0, received: 0, discount: 0, voided: 0, bills: [], receipts: [] });
+        monthMap.set(b.period, { billed: 0, received: 0, discount: 0, bills: [], receipts: [] });
       }
       const m = monthMap.get(b.period)!;
       m.bills.push(b);
-      if (b.status === 'void') {
-        m.voided += b.totalAmount;
-      } else {
+      if (b.status !== 'void') {
         m.billed += b.totalAmount;
+      } else {
+        m.billed -= b.totalAmount;
       }
     }
 
     for (const r of ownerReceipts) {
-      if (r.status === 'void') continue;
       const payMonth = r.payDate.slice(0, 7);
       if (!monthMap.has(payMonth)) {
-        monthMap.set(payMonth, { billed: 0, received: 0, discount: 0, voided: 0, bills: [], receipts: [] });
+        monthMap.set(payMonth, { billed: 0, received: 0, discount: 0, bills: [], receipts: [] });
       }
       const m = monthMap.get(payMonth)!;
       m.receipts.push(r);
-      m.received += r.amount;
-      m.discount += r.discount || 0;
+      if (r.status !== 'void') {
+        m.received += r.amount;
+        m.discount += r.discount || 0;
+      }
     }
 
     const sortedMonths = Array.from(monthMap.keys()).sort();
-    let cumUnpaid = 0;
+    let rollingUnpaid = 0;
     return sortedMonths.map((period) => {
       const d = monthMap.get(period)!;
-      const monthUnpaid = Math.max(0, d.billed - d.received - d.discount);
-      cumUnpaid += monthUnpaid;
+      const monthStart = rollingUnpaid;
+      const monthBilled = d.billed;
+      const monthReceived = d.received;
+      const monthDiscount = d.discount;
+      const monthWriteOff = monthReceived + monthDiscount;
+      const monthEnd = Math.round((monthStart + monthBilled - monthWriteOff) * 100) / 100;
+      rollingUnpaid = monthEnd;
       return {
         period,
-        ...d,
-        unpaid: Math.max(0, d.billed - d.received - d.discount),
-        cumUnpaid,
+        billed: monthBilled,
+        received: monthReceived,
+        discount: monthDiscount,
+        writeOff: monthWriteOff,
+        startUnpaid: monthStart,
+        endUnpaid: monthEnd,
+        bills: d.bills,
+        receipts: d.receipts,
       };
-    }).reverse();
+    });
   }, [ownerBills, ownerReceipts]);
+
+  const rollingTotal = useMemo(() => {
+    const totalBilled = monthlyData.reduce((s, m) => s + m.billed, 0);
+    const totalWriteOff = monthlyData.reduce((s, m) => s + m.writeOff, 0);
+    const finalUnpaid = monthlyData.length > 0 ? monthlyData[monthlyData.length - 1].endUnpaid : 0;
+    return { totalBilled, totalWriteOff, finalUnpaid };
+  }, [monthlyData]);
 
   return (
     <div className="space-y-5 pb-6">
-      <div className="px-6 grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50">
-          <p className="text-[11px] text-slate-500">累计应收</p>
-          <p className="mt-1 text-lg font-bold text-slate-900 font-serif tabular-nums">{formatCurrency(kpi.billed)}</p>
+      <div className="px-6 space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50">
+            <p className="text-[11px] text-slate-500">累计应收</p>
+            <p className="mt-1 text-lg font-bold text-slate-900 font-serif tabular-nums">{formatCurrency(kpi.billed)}</p>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-success-50/40">
+            <p className="text-[11px] text-slate-500">累计实收</p>
+            <p className="mt-1 text-lg font-bold text-success-700 font-serif tabular-nums">{formatCurrency(kpi.received)}</p>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-indigo-50/40">
+            <p className="text-[11px] text-slate-500">累计减免</p>
+            <p className="mt-1 text-lg font-bold text-indigo-600 font-serif tabular-nums">{formatCurrency(kpi.discount)}</p>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-warning-50/40">
+            <p className="text-[11px] text-slate-500">当前欠费</p>
+            <p className="mt-1 text-lg font-bold text-warning-600 font-serif tabular-nums">{formatCurrency(kpi.unpaid)}</p>
+          </div>
         </div>
-        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-success-50/40">
-          <p className="text-[11px] text-slate-500">累计实收</p>
-          <p className="mt-1 text-lg font-bold text-success-700 font-serif tabular-nums">{formatCurrency(kpi.received)}</p>
-        </div>
-        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-indigo-50/40">
-          <p className="text-[11px] text-slate-500">累计减免</p>
-          <p className="mt-1 text-lg font-bold text-indigo-600 font-serif tabular-nums">{formatCurrency(kpi.discount)}</p>
-        </div>
-        <div className="p-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-warning-50/40">
-          <p className="text-[11px] text-slate-500">当前欠费</p>
-          <p className="mt-1 text-lg font-bold text-warning-600 font-serif tabular-nums">{formatCurrency(kpi.unpaid)}</p>
-        </div>
+        <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+          <span className="inline-block w-1 h-1 rounded-full bg-primary-400" />
+          以下按月滚存计算：<span className="font-mono">期末欠费 = 期初 + 本月应收 − 本月核销</span>
+        </p>
       </div>
 
       <div className="px-6">
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
             <CalendarDays className="w-4 h-4 text-primary-600" />
-            月度账务明细
+            月度账务明细（滚存）
           </h4>
           <span className="text-[11px] text-slate-500">共 {monthlyData.length} 个月</span>
         </div>
@@ -511,11 +535,10 @@ const OwnerFinanceSummary = ({
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
                   <th className="px-3 py-2.5">月份</th>
-                  <th className="px-3 py-2.5 text-right">应收</th>
-                  <th className="px-3 py-2.5 text-right">实收</th>
-                  <th className="px-3 py-2.5 text-right">减免</th>
-                  <th className="px-3 py-2.5 text-right">作废</th>
-                  <th className="px-3 py-2.5 text-right">欠费</th>
+                  <th className="px-3 py-2.5 text-right">期初欠费</th>
+                  <th className="px-3 py-2.5 text-right">本月应收</th>
+                  <th className="px-3 py-2.5 text-right">本月核销</th>
+                  <th className="px-3 py-2.5 text-right">期末欠费</th>
                 </tr>
               </thead>
               <tbody>
@@ -539,35 +562,68 @@ const OwnerFinanceSummary = ({
                             <span className="font-medium text-slate-900">{m.period}</span>
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 text-right text-slate-900 font-medium tabular-nums">{formatCurrency(m.billed)}</td>
-                        <td className="px-3 py-2.5 text-right text-success-700 font-medium tabular-nums">{formatCurrency(m.received)}</td>
-                        <td className="px-3 py-2.5 text-right">
-                          {m.discount > 0
-                            ? <span className="text-indigo-600 font-medium tabular-nums">-{formatCurrency(m.discount)}</span>
-                            : <span className="text-slate-300 tabular-nums">—</span>
-                          }
+                        <td className="px-3 py-2.5 text-right text-slate-900 font-medium tabular-nums">{formatCurrency(m.startUnpaid)}</td>
+                        <td className="px-3 py-2.5 text-right text-primary-700 font-medium tabular-nums">{formatCurrency(m.billed)}</td>
+                        <td className="px-3 py-2.5 text-right text-success-700 font-medium tabular-nums">
+                          {m.writeOff > 0 ? `-${formatCurrency(m.writeOff)}` : formatCurrency(0)}
                         </td>
                         <td className="px-3 py-2.5 text-right">
-                          {m.voided > 0
-                            ? <span className="text-slate-400 font-medium tabular-nums line-through">{formatCurrency(m.voided)}</span>
-                            : <span className="text-slate-300 tabular-nums">—</span>
-                          }
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          {m.unpaid > 0
-                            ? <span className="text-warning-600 font-bold tabular-nums">{formatCurrency(m.unpaid)}</span>
-                            : <span className="text-slate-400 font-medium tabular-nums">{formatCurrency(0)}</span>
+                          {m.endUnpaid > 0
+                            ? <span className="text-warning-600 font-bold tabular-nums">{formatCurrency(m.endUnpaid)}</span>
+                            : <span className="text-success-600 font-bold tabular-nums">{formatCurrency(m.endUnpaid)}</span>
                           }
                         </td>
                       </tr>
                       {expanded && (
                         <tr className="bg-slate-50/30">
-                          <td colSpan={6} className="px-3 py-3">
+                          <td colSpan={5} className="px-3 py-3">
                             <div className="space-y-3 animate-fade-in">
+                              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                <div className="px-3 py-2 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100 flex items-center gap-1.5">
+                                  <span className="text-[11px] font-semibold text-slate-800">📊 本月滚存说明</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-px bg-slate-100">
+                                  <div className="bg-white p-3">
+                                    <p className="text-[10px] text-slate-500">期初欠费</p>
+                                    <p className="mt-1 text-base font-bold text-slate-900 font-serif tabular-nums">{formatCurrency(m.startUnpaid)}</p>
+                                  </div>
+                                  <div className="bg-white p-3">
+                                    <p className="text-[10px] text-slate-500">本月应收</p>
+                                    <p className="mt-1 text-base font-bold text-primary-700 font-serif tabular-nums">+{formatCurrency(m.billed)}</p>
+                                  </div>
+                                  <div className="bg-white p-3">
+                                    <p className="text-[10px] text-slate-500">本月核销</p>
+                                    <div className="mt-1">
+                                      <p className="text-base font-bold text-success-700 font-serif tabular-nums">-{formatCurrency(m.writeOff)}</p>
+                                      <p className="text-[10px] text-slate-500 mt-0.5 tabular-nums">
+                                        实收 {formatCurrency(m.received)} + 减免 {formatCurrency(m.discount)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className={cn(
+                                    'p-3',
+                                    m.endUnpaid > 0 ? 'bg-warning-50/50' : 'bg-success-50/50'
+                                  )}>
+                                    <p className="text-[10px] text-slate-500">期末欠费</p>
+                                    <div className="mt-1">
+                                      <p className={cn(
+                                        'text-base font-bold font-serif tabular-nums',
+                                        m.endUnpaid > 0 ? 'text-warning-600' : 'text-success-600'
+                                      )}>
+                                        {formatCurrency(m.endUnpaid)}
+                                      </p>
+                                      <p className="text-[10px] text-slate-500 mt-0.5 tabular-nums font-mono">
+                                        = {formatCurrency(m.startUnpaid)} + {formatCurrency(m.billed)} − {formatCurrency(m.writeOff)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
                               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                                 <div className="px-3 py-2 bg-slate-50/70 border-b border-slate-100 flex items-center gap-1.5">
                                   <FileText className="w-3.5 h-3.5 text-primary-600" />
-                                  <p className="text-[11px] font-semibold text-primary-800">📋 本月账单（{m.bills.length} 张）</p>
+                                  <p className="text-[11px] font-semibold text-primary-800">📋 相关账单（{m.bills.length} 张）</p>
                                 </div>
                                 <div className="p-2 space-y-1.5 max-h-48 overflow-y-auto">
                                   {m.bills.length === 0 ? (
@@ -598,25 +654,43 @@ const OwnerFinanceSummary = ({
                               <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                                 <div className="px-3 py-2 bg-success-50/70 border-b border-success-100 flex items-center gap-1.5">
                                   <Receipt className="w-3.5 h-3.5 text-success-600" />
-                                  <p className="text-[11px] font-semibold text-success-800">💰 本月收款（{m.receipts.length} 笔）</p>
+                                  <p className="text-[11px] font-semibold text-success-800">💰 相关收款（{m.receipts.length} 笔）</p>
                                 </div>
                                 <div className="p-2 space-y-1.5 max-h-48 overflow-y-auto">
                                   {m.receipts.length === 0 ? (
                                     <p className="px-2 py-3 text-center text-[11px] text-slate-400">本月无收款记录</p>
                                   ) : m.receipts.map((r) => (
-                                    <div key={r.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-success-50/40 transition-colors">
+                                    <div key={r.id} className={cn(
+                                      'flex items-center justify-between p-2 rounded-lg transition-colors',
+                                      r.status === 'void' ? 'bg-slate-50 opacity-60' : 'hover:bg-success-50/40'
+                                    )}>
                                       <div>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-xs font-semibold text-success-800">收款 #{r.id.slice(-6).toUpperCase()}</span>
+                                          {r.status === 'void' && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">已作废</span>
+                                          )}
                                         </div>
                                         <p className="text-[10px] text-slate-500 mt-0.5">
                                           {r.payDate.slice(5, 16)} · {r.operatorName} · {r.method}
+                                          {r.status === 'void' && r.voidReason && <span className="ml-1 text-danger-500">原因：{r.voidReason}</span>}
                                         </p>
                                       </div>
                                       <div className="text-right">
-                                        <p className="text-xs font-bold text-success-700 tabular-nums">+{formatCurrency(r.amount)}</p>
-                                        {r.discount > 0 && (
-                                          <p className="text-[10px] text-indigo-600 mt-0.5 tabular-nums">减免 {formatCurrency(r.discount)}</p>
+                                        {r.status !== 'void' ? (
+                                          <>
+                                            <p className="text-xs font-bold text-success-700 tabular-nums">+{formatCurrency(r.amount)}</p>
+                                            {r.discount > 0 && (
+                                              <p className="text-[10px] text-indigo-600 mt-0.5 tabular-nums">减免 {formatCurrency(r.discount)}</p>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <>
+                                            <p className="text-xs font-medium text-slate-400 line-through tabular-nums">{formatCurrency(r.amount)}</p>
+                                            {r.discount > 0 && (
+                                              <p className="text-[10px] text-slate-400 mt-0.5 line-through tabular-nums">减免 {formatCurrency(r.discount)}</p>
+                                            )}
+                                          </>
                                         )}
                                       </div>
                                     </div>
@@ -632,8 +706,27 @@ const OwnerFinanceSummary = ({
                 })}
                 {monthlyData.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-10 text-center text-slate-400 text-xs">
+                    <td colSpan={5} className="px-3 py-10 text-center text-slate-400 text-xs">
                       暂无账务数据
+                    </td>
+                  </tr>
+                )}
+                {monthlyData.length > 0 && (
+                  <tr className="bg-slate-50/80 border-t-2 border-slate-200">
+                    <td className="px-3 py-2.5 text-xs font-semibold text-slate-700">滚存合计</td>
+                    <td className="px-3 py-2.5 text-right text-xs text-slate-500 tabular-nums">-</td>
+                    <td className="px-3 py-2.5 text-right text-xs font-semibold text-primary-700 tabular-nums">{formatCurrency(rollingTotal.totalBilled)}</td>
+                    <td className="px-3 py-2.5 text-right text-xs font-semibold text-success-700 tabular-nums">-{formatCurrency(rollingTotal.totalWriteOff)}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <span className={cn(
+                        'text-xs font-bold tabular-nums',
+                        rollingTotal.finalUnpaid > 0 ? 'text-warning-600' : 'text-success-600'
+                      )}>
+                        {formatCurrency(rollingTotal.finalUnpaid)}
+                      </span>
+                      <span className="ml-2 text-[10px] text-slate-500">
+                        （当前欠费 = {formatCurrency(kpi.unpaid)}）
+                      </span>
                     </td>
                   </tr>
                 )}

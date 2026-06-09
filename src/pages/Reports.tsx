@@ -32,22 +32,39 @@ export const Reports = () => {
   const [activeTab, setActiveTab] = useState<TabKey>('building');
 
   const allBuildings = useMemo(() => Array.from(new Set(owners.map((o) => o.building))).sort(), [owners]);
-  const allStaffs = useMemo(() => staffs.filter((s) => s.role === 'service').map((s) => s.name), [staffs]);
+  const allFollowStaffs = useMemo(() => staffs.filter((s) => s.role === 'service').map((s) => s.name), [staffs]);
+  const allFinanceStaffs = useMemo(() => ['全部收款', ...staffs.filter((s) => s.role === 'finance' || s.role === 'manager').map((s) => s.name)], [staffs]);
   const allMonths = useMemo(() => ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'], []);
 
   const [selectedBuildings, setSelectedBuildings] = useState<string[]>(allBuildings);
-  const [selectedStaffs, setSelectedStaffs] = useState<string[]>(allStaffs);
+  const [selectedFollowStaffs, setSelectedFollowStaffs] = useState<string[]>(allFollowStaffs);
+  const [selectedFinanceStaffs, setSelectedFinanceStaffs] = useState<string[]>(['全部收款']);
   const [monthStart, setMonthStart] = useState('2026-01');
   const [monthEnd, setMonthEnd] = useState('2026-06');
 
   useEffect(() => { setSelectedBuildings(allBuildings); }, [allBuildings.join(',')]);
-  useEffect(() => { setSelectedStaffs(allStaffs); }, [allStaffs.join(',')]);
+  useEffect(() => { setSelectedFollowStaffs(allFollowStaffs); }, [allFollowStaffs.join(',')]);
+  useEffect(() => { setSelectedFinanceStaffs(['全部收款']); }, [allFinanceStaffs.join(',')]);
 
   const toggleBuilding = (b: string) => {
     setSelectedBuildings((prev) => prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]);
   };
-  const toggleStaff = (s: string) => {
-    setSelectedStaffs((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+  const toggleFollowStaff = (s: string) => {
+    setSelectedFollowStaffs((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+  };
+  const toggleFinanceStaff = (s: string) => {
+    if (s === '全部收款') {
+      setSelectedFinanceStaffs(['全部收款']);
+      return;
+    }
+    setSelectedFinanceStaffs((prev) => {
+      const next = prev.filter((x) => x !== '全部收款');
+      if (next.includes(s)) {
+        const result = next.filter((x) => x !== s);
+        return result.length === 0 ? ['全部收款'] : result;
+      }
+      return [...next, s];
+    });
   };
 
   const filteredMonths = useMemo(() => {
@@ -83,7 +100,8 @@ export const Reports = () => {
     for (const r of receipts) {
       if (r.status === 'void') continue;
       if (!buildingSet.has(r.building)) continue;
-      if (!selectedStaffs.includes(r.operatorName)) continue;
+      const financePass = selectedFinanceStaffs.includes('全部收款') ? true : selectedFinanceStaffs.includes(r.operatorName);
+      if (!financePass) continue;
       const payMonth = r.payDate.slice(0, 7);
       if (!monthSet.has(payMonth)) continue;
       if (!map.has(r.building)) continue;
@@ -109,12 +127,17 @@ export const Reports = () => {
       })
       .sort((a, b) => b['欠费金额'] - a['欠费金额'])
       .map((d, i) => ({ ...d, 排名: i + 1 }));
-  }, [owners, bills, receipts, selectedBuildings, selectedStaffs, filteredMonths]);
+  }, [owners, bills, receipts, selectedBuildings, selectedFinanceStaffs, filteredMonths]);
 
   const monthlyData = useMemo(() => {
     return filteredMonths.map((m) => {
       const billed = bills.filter((b) => b.period === m && b.status !== 'void' && selectedBuildings.includes(b.building)).reduce((sum, b) => sum + b.totalAmount, 0);
-      const mReceipts = receipts.filter((r) => r.status !== 'void' && r.payDate.startsWith(m) && selectedBuildings.includes(r.building) && selectedStaffs.includes(r.operatorName));
+      const mReceipts = receipts.filter((r) => {
+        if (r.status === 'void') return false;
+        if (!r.payDate.startsWith(m)) return false;
+        if (!selectedBuildings.includes(r.building)) return false;
+        return selectedFinanceStaffs.includes('全部收款') ? true : selectedFinanceStaffs.includes(r.operatorName);
+      });
       const received = mReceipts.reduce((sum, r) => sum + r.amount, 0);
       const discount = mReceipts.reduce((sum, r) => sum + (r.discount || 0), 0);
       const unpaid = Math.max(0, billed - received - discount);
@@ -128,12 +151,12 @@ export const Reports = () => {
         收缴率: billed > 0 ? Math.round(((received + discount) / billed) * 1000) / 10 : 0,
       };
     });
-  }, [bills, receipts, selectedBuildings, selectedStaffs, filteredMonths]);
+  }, [bills, receipts, selectedBuildings, selectedFinanceStaffs, filteredMonths]);
 
   const staffData = useMemo(() => {
     const monthSet = new Set(filteredMonths);
     return staffs
-      .filter((s) => s.role === 'service' && selectedStaffs.includes(s.name))
+      .filter((s) => s.role === 'service' && selectedFollowStaffs.includes(s.name))
       .map((s) => {
         const sTasks = tasks.filter((t) => {
           if (t.assigneeName !== s.name) return false;
@@ -161,7 +184,8 @@ export const Reports = () => {
           if (!selectedBuildings.includes(r.building)) return false;
           const payMonth = r.payDate.slice(0, 7);
           if (!monthSet.has(payMonth)) return false;
-          return true;
+          const financePass = selectedFinanceStaffs.includes('全部收款') ? true : selectedFinanceStaffs.includes(r.operatorName);
+          return financePass;
         }).reduce((sum, r) => sum + r.amount, 0);
         return {
           staffId: s.id,
@@ -175,19 +199,23 @@ export const Reports = () => {
         };
       })
       .sort((a, b) => b['完成任务'] - a['完成任务']);
-  }, [staffs, tasks, notifications, receipts, owners, selectedStaffs, selectedBuildings, filteredMonths]);
+  }, [staffs, tasks, notifications, receipts, owners, selectedFollowStaffs, selectedFinanceStaffs, selectedBuildings, filteredMonths]);
 
   const resetAllFilters = () => {
     setSelectedBuildings(allBuildings);
-    setSelectedStaffs(allStaffs);
+    setSelectedFollowStaffs(allFollowStaffs);
+    setSelectedFinanceStaffs(['全部收款']);
     setMonthStart('2026-01');
     setMonthEnd('2026-06');
   };
 
   const filterMonthRangeStr = `${monthStart.replace('2026-', '')}月 ~ ${monthEnd.replace('2026-', '')}月`;
   const filterBuildingCount = selectedBuildings.length;
-  const filterStaffCount = selectedStaffs.length;
-  const hasActiveFilter = filterBuildingCount < allBuildings.length || filterStaffCount < allStaffs.length || monthStart !== '2026-01' || monthEnd !== '2026-06';
+  const filterFollowStaffCount = selectedFollowStaffs.length;
+  const filterFinanceStaffCount = selectedFinanceStaffs.length;
+  const hasActiveFollowFilter = filterFollowStaffCount < allFollowStaffs.length;
+  const hasActiveFinanceFilter = !selectedFinanceStaffs.includes('全部收款');
+  const hasActiveFilter = filterBuildingCount < allBuildings.length || hasActiveFollowFilter || hasActiveFinanceFilter || monthStart !== '2026-01' || monthEnd !== '2026-06';
 
   const exportBuilding = () => {
     downloadCSV(
@@ -272,12 +300,19 @@ export const Reports = () => {
             <div className="w-11 h-11 rounded-xl bg-indigo-50 flex items-center justify-center">
               <Trophy className="w-5 h-5 text-indigo-600" />
             </div>
-            <div>
-              <p className="text-xs text-slate-500">考核人员</p>
-              <p className="mt-1 text-2xl font-bold text-slate-900 font-serif tabular-nums">
-                {filterStaffCount} 人
-              </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">共 {allStaffs.length} 人</p>
+            <div className="space-y-1.5">
+              <p className="text-xs text-slate-500">人员筛选</p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-indigo-600 font-medium">🏢跟进：</span>
+                <span className="text-sm font-bold text-slate-900 font-serif tabular-nums">{filterFollowStaffCount}</span>
+                <span className="text-[10px] text-slate-400">/ {allFollowStaffs.length} 人</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-success-600 font-medium">💰收款：</span>
+                <span className="text-sm font-bold text-slate-900 font-serif tabular-nums">
+                  {selectedFinanceStaffs.includes('全部收款') ? '全部' : filterFinanceStaffCount + ' 人'}
+                </span>
+              </div>
             </div>
           </div>
         </Card>
@@ -378,25 +413,50 @@ export const Reports = () => {
                 </button>
               ))}
             </div>
-            <div className="h-5 w-px bg-slate-200" />
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <Users className="w-4 h-4 text-slate-500" />
-              <span className="text-xs font-medium text-slate-600">客服：</span>
-              {allStaffs.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => toggleStaff(s)}
-                  className={cn(
-                    'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
-                    selectedStaffs.includes(s)
-                      ? 'bg-indigo-700 text-white border-indigo-700 shadow-sm'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
-                  )}
-                >
-                  {s}
-                </button>
-              ))}
+          </div>
+          <div className="flex flex-wrap items-start gap-8">
+            <div className="flex items-start gap-2 flex-wrap min-w-0">
+              <Users className="w-4 h-4 text-indigo-500 mt-1" />
+              <span className="text-xs font-semibold text-indigo-700">🏢 跟进人员（任务维度）：</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {allFollowStaffs.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => toggleFollowStaff(s)}
+                    className={cn(
+                      'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
+                      selectedFollowStaffs.includes(s)
+                        ? 'bg-indigo-700 text-white border-indigo-700 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="h-6 w-px bg-slate-200 self-center" />
+            <div className="flex items-start gap-2 flex-wrap min-w-0">
+              <Users className="w-4 h-4 text-success-500 mt-1" />
+              <span className="text-xs font-semibold text-success-700">💰 收款人员（财务维度）：</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {allFinanceStaffs.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => toggleFinanceStaff(s)}
+                    className={cn(
+                      'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
+                      selectedFinanceStaffs.includes(s)
+                        ? 'bg-success-600 text-white border-success-600 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-success-300'
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>

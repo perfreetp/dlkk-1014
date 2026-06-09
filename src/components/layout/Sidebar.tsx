@@ -8,6 +8,7 @@ import {
   CreditCard,
   BarChart3,
   Building2,
+  Scale,
 } from 'lucide-react';
 import { cn } from '@/utils/helpers';
 
@@ -18,6 +19,7 @@ const navItems = [
   { path: '/tasks', label: '催缴任务', icon: ClipboardList },
   { path: '/notifications', label: '通知记录', icon: Bell },
   { path: '/receipts', label: '收款登记', icon: CreditCard },
+  { path: '/reconciliation', label: '财务对账', icon: Scale },
   { path: '/reports', label: '统计报表', icon: BarChart3 },
 ];
 

@@ -7,6 +7,7 @@ import { Tasks } from '@/pages/Tasks';
 import { Notifications } from '@/pages/Notifications';
 import { Receipts } from '@/pages/Receipts';
 import { Reports } from '@/pages/Reports';
+import { Reconciliation } from '@/pages/Reconciliation';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/receipts" element={<Receipts />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/reconciliation" element={<Reconciliation />} />
         </Routes>
       </Layout>
     </BrowserRouter>
