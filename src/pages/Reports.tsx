@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend, PieChart, Pie, Cell,
 } from 'recharts';
-import { Download, Building2, Calendar, Users, TrendingUp, FileSpreadsheet, Trophy } from 'lucide-react';
+import { Download, Building2, Calendar, Users, TrendingUp, FileSpreadsheet, Trophy, X, Filter } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { useAppStore } from '@/store';
@@ -31,9 +31,30 @@ export const Reports = () => {
 
   const [activeTab, setActiveTab] = useState<TabKey>('building');
 
+  const allBuildings = useMemo(() => Array.from(new Set(owners.map((o) => o.building))).sort(), [owners]);
+  const allStaffs = useMemo(() => staffs.filter((s) => s.role === 'service').map((s) => s.name), [staffs]);
+  const allMonths = useMemo(() => ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'], []);
+
+  const [selectedBuildings, setSelectedBuildings] = useState<string[]>(allBuildings);
+  const [selectedStaffs, setSelectedStaffs] = useState<string[]>(allStaffs);
+  const [monthStart, setMonthStart] = useState('2026-01');
+  const [monthEnd, setMonthEnd] = useState('2026-06');
+
+  useEffect(() => { setSelectedBuildings(allBuildings); }, [allBuildings.join(',')]);
+  useEffect(() => { setSelectedStaffs(allStaffs); }, [allStaffs.join(',')]);
+
+  const toggleBuilding = (b: string) => {
+    setSelectedBuildings((prev) => prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]);
+  };
+  const toggleStaff = (s: string) => {
+    setSelectedStaffs((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+  };
+
   const buildingData = useMemo(() => {
+    const buildingSet = new Set(selectedBuildings);
     const map = new Map<string, { households: number; unpaidHouseholds: number; unpaidAmount: number; paidAmount: number; totalBilled: number }>();
     for (const o of owners) {
+      if (!buildingSet.has(o.building)) continue;
       const prev = map.get(o.building) || { households: 0, unpaidHouseholds: 0, unpaidAmount: 0, paidAmount: 0, totalBilled: 0 };
       map.set(o.building, {
         ...prev,
@@ -44,6 +65,8 @@ export const Reports = () => {
     }
     for (const b of bills) {
       if (b.status === 'void') continue;
+      if (!buildingSet.has(b.building)) continue;
+      if (!map.has(b.building)) continue;
       const prev = map.get(b.building)!;
       prev.paidAmount += b.paidAmount;
       prev.totalBilled += b.totalAmount;
@@ -64,34 +87,37 @@ export const Reports = () => {
       })
       .sort((a, b) => b['欠费金额'] - a['欠费金额'])
       .map((d, i) => ({ ...d, 排名: i + 1 }));
-  }, [owners, bills]);
+  }, [owners, bills, selectedBuildings]);
 
   const monthlyData = useMemo(() => {
-    const months = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06'];
-    return months.map((m) => {
-      const billed = bills.filter((b) => b.period === m && b.status !== 'void').reduce((s, b) => s + b.totalAmount, 0);
-      const received = receipts.filter((r) => r.payDate.startsWith(m)).reduce((s, r) => s + r.amount, 0);
+    const startIdx = allMonths.indexOf(monthStart);
+    const endIdx = allMonths.indexOf(monthEnd);
+    const [s, e] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+    return allMonths.slice(s, e + 1).map((m) => {
+      const billed = bills.filter((b) => b.period === m && b.status !== 'void' && selectedBuildings.includes(b.building)).reduce((sum, b) => sum + b.totalAmount, 0);
+      const received = receipts.filter((r) => r.payDate.startsWith(m) && selectedBuildings.includes(r.building)).reduce((sum, r) => sum + r.amount, 0);
       const unpaid = Math.max(0, billed - received);
       return {
         月份: m.replace('2026-', '') + '月',
+        _period: m,
         应收: Math.round(billed),
         实收: Math.round(received),
         欠费: Math.round(unpaid),
         收缴率: billed > 0 ? Math.round((received / billed) * 1000) / 10 : 0,
       };
     });
-  }, [bills, receipts]);
+  }, [bills, receipts, selectedBuildings, monthStart, monthEnd, allMonths]);
 
   const staffData = useMemo(() => {
     return staffs
-      .filter((s) => s.role === 'service')
+      .filter((s) => s.role === 'service' && selectedStaffs.includes(s.name))
       .map((s) => {
-        const sTasks = tasks.filter((t) => t.assigneeName === s.name);
+        const sTasks = tasks.filter((t) => t.assigneeName === s.name && (t.building ? selectedBuildings.includes(t.building) : true));
         const completedTasks = sTasks.filter((t) => t.status === 'completed');
         const totalTasks = sTasks.length;
-        const sNotifs = notifications.filter((n) => n.operatorName === s.name);
+        const sNotifs = notifications.filter((n) => n.operatorName === s.name && (n.ownerId ? (() => { const o = owners.find((x) => x.id === n.ownerId); return o ? selectedBuildings.includes(o.building) : true; })() : true));
         const successNotifs = sNotifs.filter((n) => n.result === 'success' || n.result === 'promised').length;
-        const totalReceipts = receipts.filter((r) => r.operatorName === s.name).reduce((sum, r) => sum + r.amount, 0);
+        const totalReceipts = receipts.filter((r) => r.operatorName === s.name && selectedBuildings.includes(r.building)).reduce((sum, r) => sum + r.amount, 0);
         return {
           staffId: s.id,
           staffName: s.name,
@@ -104,7 +130,11 @@ export const Reports = () => {
         };
       })
       .sort((a, b) => b['完成任务'] - a['完成任务']);
-  }, [staffs, tasks, notifications, receipts]);
+  }, [staffs, tasks, notifications, receipts, owners, selectedStaffs, selectedBuildings]);
+
+  const resetBuildingFilters = () => setSelectedBuildings(allBuildings);
+  const resetStaffFilters = () => setSelectedStaffs(allStaffs);
+  const resetMonthlyFilters = () => { setMonthStart('2026-01'); setMonthEnd('2026-06'); setSelectedBuildings(allBuildings); };
 
   const exportBuilding = () => {
     downloadCSV(
@@ -226,6 +256,33 @@ export const Reports = () => {
         <CardBody className="space-y-6">
           {activeTab === 'building' && (
             <>
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-wrap items-center gap-2">
+                <Filter className="w-4 h-4 text-slate-500 shrink-0" />
+                <span className="text-xs font-medium text-slate-600 mr-1">筛选楼栋：</span>
+                {allBuildings.map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => toggleBuilding(b)}
+                    className={cn(
+                      'px-2.5 h-8 rounded-lg text-xs font-medium border transition-all',
+                      selectedBuildings.includes(b)
+                        ? 'bg-primary-800 text-white border-primary-800'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                    )}
+                  >
+                    {b}
+                  </button>
+                ))}
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={resetBuildingFilters}
+                  className="h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
+                >
+                  <X className="w-3 h-3" /> 重置
+                </button>
+              </div>
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div>
                   <div className="flex items-center justify-between mb-3">
@@ -351,6 +408,58 @@ export const Reports = () => {
 
           {activeTab === 'monthly' && (
             <>
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-slate-500 shrink-0" />
+                  <span className="text-xs font-medium text-slate-600">月份范围：</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="month"
+                    value={monthStart}
+                    onChange={(e) => setMonthStart(e.target.value)}
+                    min="2026-01"
+                    max="2026-06"
+                    className="h-9 px-3 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400/30"
+                  />
+                  <span className="text-slate-400 text-sm">至</span>
+                  <input
+                    type="month"
+                    value={monthEnd}
+                    onChange={(e) => setMonthEnd(e.target.value)}
+                    min="2026-01"
+                    max="2026-06"
+                    className="h-9 px-3 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400/30"
+                  />
+                </div>
+                <div className="h-6 w-px bg-slate-200 mx-1" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-slate-600">楼栋：</span>
+                  {allBuildings.map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => toggleBuilding(b)}
+                      className={cn(
+                        'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
+                        selectedBuildings.includes(b)
+                          ? 'bg-primary-800 text-white border-primary-800'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                      )}
+                    >
+                      {b}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={resetMonthlyFilters}
+                  className="h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
+                >
+                  <X className="w-3 h-3" /> 重置
+                </button>
+              </div>
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-slate-900">月度缴费趋势</h4>
@@ -467,6 +576,52 @@ export const Reports = () => {
 
           {activeTab === 'staff' && (
             <>
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Filter className="w-4 h-4 text-slate-500 shrink-0" />
+                  <span className="text-xs font-medium text-slate-600 mr-1">客服人员：</span>
+                  {allStaffs.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => toggleStaff(s)}
+                      className={cn(
+                        'px-2.5 h-8 rounded-lg text-xs font-medium border transition-all',
+                        selectedStaffs.includes(s)
+                          ? 'bg-primary-800 text-white border-primary-800'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                      )}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={resetStaffFilters}
+                    className="ml-2 h-8 px-3 rounded-lg text-xs text-slate-500 hover:text-danger-500 hover:bg-danger-50 flex items-center gap-1 transition-all"
+                  >
+                    <X className="w-3 h-3" /> 重置人员
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-slate-600 w-16">楼栋范围：</span>
+                  {allBuildings.map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => toggleBuilding(b)}
+                      className={cn(
+                        'px-2 h-7 rounded-md text-[11px] font-medium border transition-all',
+                        selectedBuildings.includes(b)
+                          ? 'bg-indigo-700 text-white border-indigo-700'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                      )}
+                    >
+                      {b}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-slate-900">人员任务完成情况</h4>

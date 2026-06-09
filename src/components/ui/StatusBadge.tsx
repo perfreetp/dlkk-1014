@@ -5,7 +5,7 @@ type OwnerStatus = 'normal' | 'arrears' | 'serious';
 type BillStatus = 'unpaid' | 'partial' | 'paid' | 'void';
 type TaskType = 'sms' | 'call' | 'visit';
 type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+type TaskStatus = 'pending' | 'contacted' | 'promised' | 'need_visit' | 'completed' | 'cancelled';
 type NotificationMethod = 'sms' | 'call' | 'visit';
 type NotificationResult = 'success' | 'failed' | 'pending' | 'promised';
 type PaymentMethod = 'cash' | 'wechat' | 'alipay' | 'bank' | 'card';
@@ -38,7 +38,9 @@ const taskPriorityConfig: Record<TaskPriority, { label: string; dot: string; tex
 
 const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {
   pending: { label: '待处理', className: 'bg-slate-100 text-slate-600 border-slate-300' },
-  in_progress: { label: '处理中', className: 'bg-blue-50 text-blue-700 border-blue-500/20' },
+  contacted: { label: '已联系', className: 'bg-blue-50 text-blue-700 border-blue-500/20' },
+  promised: { label: '承诺缴费', className: 'bg-warning-50 text-warning-600 border-warning-500/20' },
+  need_visit: { label: '需上门', className: 'bg-purple-50 text-purple-700 border-purple-500/20' },
   completed: { label: '已完成', className: 'bg-success-50 text-success-700 border-success-500/20' },
   cancelled: { label: '已取消', className: 'bg-slate-50 text-slate-500 border-slate-200' },
 };

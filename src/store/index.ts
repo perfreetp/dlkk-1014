@@ -1,7 +1,53 @@
 import { create } from 'zustand';
-import type { Owner, Bill, Task, Notification, Receipt, Staff, BillStatus, TaskStatus } from '@/types';
+import type {
+  Owner, Bill, Task, Notification, Receipt, Staff, BillStatus, TaskStatus,
+  TaskType, NotificationMethod, NotificationResult, PaymentMethod, ReceiptBillAllocation,
+} from '@/types';
 import { mockOwners, mockBills, mockTasks, mockNotifications, mockReceipts, mockStaffs } from '@/data/mockData';
 import { generateId, todayStr, nowStr } from '@/utils/format';
+
+const STORAGE_KEY = 'property_debt_app_v1';
+
+type PersistKeys = 'owners' | 'bills' | 'tasks' | 'notifications' | 'receipts';
+
+const loadFromStorage = (): Partial<Pick<AppStore, PersistKeys>> => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const result: Partial<Pick<AppStore, PersistKeys>> = {};
+    if (Array.isArray(parsed.owners)) result.owners = parsed.owners;
+    if (Array.isArray(parsed.bills)) result.bills = parsed.bills;
+    if (Array.isArray(parsed.tasks)) result.tasks = parsed.tasks;
+    if (Array.isArray(parsed.notifications)) result.notifications = parsed.notifications;
+    if (Array.isArray(parsed.receipts)) result.receipts = parsed.receipts;
+    return result;
+  } catch {
+    return {};
+  }
+};
+
+const saveToStorage = (state: Pick<AppStore, PersistKeys>) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      owners: state.owners,
+      bills: state.bills,
+      tasks: state.tasks,
+      notifications: state.notifications,
+      receipts: state.receipts,
+    }));
+  } catch {
+    /* ignore */
+  }
+};
+
+const normalizeMockTaskStatus = (tasks: Task[]): Task[] => {
+  return tasks.map((t) => {
+    return { ...t, status: t.status };
+  });
+};
+
+const saved = loadFromStorage();
 
 interface AppStore {
   owners: Owner[];
@@ -45,22 +91,55 @@ interface AppStore {
   updateBill: (id: string, data: Partial<Bill>) => void;
   voidBill: (id: string, reason: string) => void;
 
-  addTask: (task: Omit<Task, 'id' | 'createDate' | 'status'> & { status?: Task['status'] }) => void;
+  addTask: (task: Omit<Task, 'id' | 'createDate' | 'status'> & { status?: TaskStatus }) => void;
   assignTask: (id: string, assigneeId: string, assigneeName: string, dueDate: string) => void;
-  updateTaskStatus: (id: string, status: TaskStatus) => void;
+  transitionTask: (params: {
+    taskId: string;
+    toStatus: TaskStatus;
+    method: TaskType;
+    result: NotificationResult;
+    operatorId: string;
+    operatorName: string;
+    content: string;
+    promisedDate?: string;
+  }) => void;
   updateTask: (id: string, data: Partial<Task>) => void;
 
   addNotification: (notification: Omit<Notification, 'id' | 'notifyDate'>) => void;
 
-  addReceipt: (receipt: Omit<Receipt, 'id' | 'payDate'>) => void;
+  addReceiptDetailed: (params: {
+    ownerId: string;
+    ownerName: string;
+    building: string;
+    room: string;
+    method: PaymentMethod;
+    operatorId: string;
+    operatorName: string;
+    remark?: string;
+    billSelections: Array<{
+      bill: Bill;
+      allocation: number;
+      discount: number;
+    }>;
+  }) => void;
+
+  recalcOwnerUnpaid: (ownerId: string, bills: Bill[]) => Pick<Owner, 'unpaidAmount' | 'unpaidMonths' | 'status'>;
+  resetAllData: () => void;
 }
 
+const getBillStatus = (total: number, paid: number, origStatus?: BillStatus): BillStatus => {
+  if (origStatus === 'void') return 'void';
+  if (paid >= total) return 'paid';
+  if (paid > 0) return 'partial';
+  return 'unpaid';
+};
+
 export const useAppStore = create<AppStore>((set, get) => ({
-  owners: mockOwners,
-  bills: mockBills,
-  tasks: mockTasks,
-  notifications: mockNotifications,
-  receipts: mockReceipts,
+  owners: saved.owners ?? mockOwners,
+  bills: saved.bills ?? mockBills,
+  tasks: saved.tasks ?? normalizeMockTaskStatus(mockTasks),
+  notifications: saved.notifications ?? mockNotifications,
+  receipts: saved.receipts ?? mockReceipts,
   staffs: mockStaffs,
 
   selectedOwnerId: null,
@@ -89,34 +168,47 @@ export const useAppStore = create<AppStore>((set, get) => ({
       status: 'unpaid',
       generateDate: todayStr(),
     };
-    set((state) => ({ bills: [newBill, ...state.bills] }));
+    set((state) => {
+      const bills = [newBill, ...state.bills];
+      const ownerUpdate = get().recalcOwnerUnpaid(newBill.ownerId, bills);
+      const owners = state.owners.map((o) => (o.id === newBill.ownerId ? { ...o, ...ownerUpdate } : o));
+      const newState = { bills, owners };
+      saveToStorage({ ...get(), ...newState });
+      return newState;
+    });
   },
 
   updateBill: (id, data) => {
-    set((state) => ({
-      bills: state.bills.map((b) => {
+    set((state) => {
+      const bills = state.bills.map((b) => {
         if (b.id !== id) return b;
         const updated = { ...b, ...data };
-        const total = updated.totalAmount;
-        const paid = updated.paidAmount;
-        if (paid >= total) {
-          updated.status = 'paid';
-        } else if (paid > 0) {
-          updated.status = 'partial';
-        } else if (updated.status !== 'void') {
-          updated.status = 'unpaid';
-        }
+        updated.status = getBillStatus(updated.totalAmount, updated.paidAmount, updated.status);
         return updated;
-      }),
-    }));
+      });
+      const target = bills.find((b) => b.id === id);
+      const owners = target
+        ? state.owners.map((o) => (o.id === target.ownerId ? { ...o, ...get().recalcOwnerUnpaid(o.id, bills) } : o))
+        : state.owners;
+      const newState = { bills, owners };
+      saveToStorage({ ...get(), ...newState });
+      return newState;
+    });
   },
 
   voidBill: (id, reason) => {
-    set((state) => ({
-      bills: state.bills.map((b) =>
-        b.id === id ? { ...b, status: 'void', remark: reason } : b
-      ),
-    }));
+    set((state) => {
+      const bills = state.bills.map((b) =>
+        b.id === id ? { ...b, status: 'void' as const, remark: reason } : b
+      );
+      const target = bills.find((b) => b.id === id);
+      const owners = target
+        ? state.owners.map((o) => (o.id === target.ownerId ? { ...o, ...get().recalcOwnerUnpaid(o.id, bills) } : o))
+        : state.owners;
+      const newState = { bills, owners };
+      saveToStorage({ ...get(), ...newState });
+      return newState;
+    });
   },
 
   addTask: (taskData) => {
@@ -126,87 +218,169 @@ export const useAppStore = create<AppStore>((set, get) => ({
       status: taskData.status || 'pending',
       createDate: todayStr(),
     };
-    set((state) => ({ tasks: [newTask, ...state.tasks] }));
+    set((state) => {
+      const newState = { tasks: [newTask, ...state.tasks] };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
   },
 
   assignTask: (id, assigneeId, assigneeName, dueDate) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === id
-          ? { ...t, assigneeId, assigneeName, dueDate, status: 'in_progress' }
-          : t
-      ),
-    }));
+    set((state) => {
+      const newState = {
+        tasks: state.tasks.map((t) =>
+          t.id === id ? { ...t, assigneeId, assigneeName, dueDate, status: 'contacted' as Task['status'] } : t
+        ),
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
   },
 
-  updateTaskStatus: (id, status) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) => (t.id === id ? { ...t, status } : t)),
-    }));
+  transitionTask: ({ taskId, toStatus, method, result, operatorId, operatorName, content, promisedDate }) => {
+    set((state) => {
+      const task = state.tasks.find((t) => t.id === taskId);
+      if (!task) return state;
+      const fromStatus = task.status;
+      const tasks = state.tasks.map((t) =>
+        t.id === taskId
+          ? {
+              ...t,
+              status: toStatus as Task['status'],
+              promisedDate: toStatus === 'promised' ? promisedDate || t.promisedDate : t.promisedDate,
+            }
+          : t
+      );
+      const notifyMethod: NotificationMethod =
+        toStatus === 'need_visit' ? 'visit' : method;
+      const newNotification: Notification = {
+        id: generateId('N'),
+        taskId,
+        ownerId: task.ownerId,
+        ownerName: task.ownerName,
+        method: notifyMethod,
+        notifyDate: nowStr(),
+        result,
+        operatorId,
+        operatorName,
+        content,
+        fromStatus,
+        toStatus,
+      };
+      const newState = {
+        tasks,
+        notifications: [newNotification, ...state.notifications],
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
   },
 
   updateTask: (id, data) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...data } : t)),
-    }));
+    set((state) => {
+      const newState = {
+        tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...data } : t)),
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
   },
 
   addNotification: (notificationData) => {
-    const newNotification: Notification = {
-      id: generateId('N'),
-      ...notificationData,
-      notifyDate: nowStr(),
-    };
-    set((state) => ({ notifications: [newNotification, ...state.notifications] }));
+    set((state) => {
+      const newNotification: Notification = {
+        id: generateId('N'),
+        ...notificationData,
+        notifyDate: nowStr(),
+      };
+      const newState = { notifications: [newNotification, ...state.notifications] };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
   },
 
-  addReceipt: (receiptData) => {
+  recalcOwnerUnpaid: (ownerId, bills) => {
+    const ownerBills = bills.filter((b) => b.ownerId === ownerId && b.status !== 'void');
+    const totalBilled = ownerBills.reduce((s, b) => s + b.totalAmount, 0);
+    const totalPaid = ownerBills.reduce((s, b) => s + b.paidAmount, 0);
+    const unpaidAmount = Math.max(0, Math.round((totalBilled - totalPaid) * 100) / 100);
+    const o = get().owners.find((x) => x.id === ownerId);
+    const feePerMonth = o ? o.area * 2.5 : 200;
+    const unpaidMonths = feePerMonth > 0 ? Math.round(unpaidAmount / feePerMonth) : 0;
+    const status: Owner['status'] =
+      unpaidMonths === 0 ? 'normal' : unpaidMonths >= 6 ? 'serious' : 'arrears';
+    return { unpaidAmount, unpaidMonths, status };
+  },
+
+  addReceiptDetailed: ({
+    ownerId, ownerName, building, room, method, operatorId, operatorName, remark,
+    billSelections,
+  }) => {
+    if (billSelections.length === 0) return;
+
+    const allocations: ReceiptBillAllocation[] = billSelections.map(({ bill, allocation, discount }) => ({
+      billId: bill.id,
+      period: bill.period,
+      billTotal: bill.totalAmount,
+      billUnpaid: bill.totalAmount - bill.paidAmount,
+      allocated: Math.round(allocation * 100) / 100,
+      discount: Math.round(discount * 100) / 100,
+    }));
+
+    const billIds = billSelections.map((b) => b.bill.id);
+    const totalBillAmount = Math.round(allocations.reduce((s, a) => s + a.billUnpaid, 0) * 100) / 100;
+    const totalDiscount = Math.round(allocations.reduce((s, a) => s + a.discount, 0) * 100) / 100;
+    const totalPaid = Math.round(allocations.reduce((s, a) => s + a.allocated, 0) * 100) / 100;
+
     const newReceipt: Receipt = {
       id: generateId('R'),
-      ...receiptData,
+      ownerId, ownerName, building, room,
+      billId: billIds[0],
+      billIds,
+      allocations,
+      totalBillAmount,
+      discount: totalDiscount,
+      amount: totalPaid,
+      method,
       payDate: nowStr(),
+      operatorId,
+      operatorName,
+      remark,
     };
+
     set((state) => {
-      const bills = [...state.bills];
-      if (newReceipt.billId) {
-        const billIdx = bills.findIndex((b) => b.id === newReceipt.billId);
-        if (billIdx !== -1) {
-          const bill = bills[billIdx];
-          const newPaid = Math.min(bill.paidAmount + newReceipt.amount, bill.totalAmount);
-          bills[billIdx] = {
-            ...bill,
-            paidAmount: newPaid,
-            status: newPaid >= bill.totalAmount ? 'paid' : newPaid > 0 ? 'partial' : bill.status,
-          };
-        }
-      }
-
-      const unpaidReceiptsForOwner = state.receipts
-        .filter((r) => r.ownerId === newReceipt.ownerId)
-        .reduce((sum, r) => sum + r.amount + r.discount, 0);
-      const billsForOwner = bills.filter((b) => b.ownerId === newReceipt.ownerId && b.status !== 'void');
-      const totalBilled = billsForOwner.reduce((sum, b) => sum + b.totalAmount, 0);
-      const totalPaid = billsForOwner.reduce((sum, b) => sum + b.paidAmount, 0);
-      const unpaidAmount = Math.max(0, totalBilled - totalPaid);
-
-      const owners: AppStore['owners'] = state.owners.map((o) => {
-        if (o.id !== newReceipt.ownerId) return o;
-        const feePerMonth = o.area * 2.5;
-        const unpaidMonths = feePerMonth > 0 ? Math.round(unpaidAmount / feePerMonth) : 0;
-        const status: Owner['status'] = unpaidMonths === 0 ? 'normal' : unpaidMonths >= 6 ? 'serious' : 'arrears';
+      const bills = state.bills.map((b) => {
+        const sel = billSelections.find((s) => s.bill.id === b.id);
+        if (!sel) return b;
+        const paid = Math.round((b.paidAmount + sel.allocation) * 100) / 100;
         return {
-          ...o,
-          unpaidAmount,
-          unpaidMonths,
-          status,
+          ...b,
+          paidAmount: Math.min(paid, b.totalAmount),
+          status: getBillStatus(b.totalAmount, Math.min(paid, b.totalAmount), b.status),
         };
       });
 
-      return {
+      const ownerUpdate = get().recalcOwnerUnpaid(ownerId, bills);
+      const owners = state.owners.map((o) => (o.id === ownerId ? { ...o, ...ownerUpdate } : o));
+
+      const newState = {
         receipts: [newReceipt, ...state.receipts],
         bills,
         owners,
       };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    });
+  },
+
+  resetAllData: () => {
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      owners: mockOwners,
+      bills: mockBills,
+      tasks: normalizeMockTaskStatus(mockTasks),
+      notifications: mockNotifications,
+      receipts: mockReceipts,
     });
   },
 }));

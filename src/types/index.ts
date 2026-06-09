@@ -35,7 +35,13 @@ export interface Bill {
 
 export type TaskType = 'sms' | 'call' | 'visit';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+export type TaskStatus =
+  | 'pending'
+  | 'contacted'
+  | 'promised'
+  | 'need_visit'
+  | 'completed'
+  | 'cancelled';
 
 export interface Task {
   id: string;
@@ -54,6 +60,7 @@ export interface Task {
   unpaidAmount: number;
   createDate: string;
   remark?: string;
+  promisedDate?: string;
 }
 
 export type NotificationMethod = 'sms' | 'call' | 'visit';
@@ -70,9 +77,20 @@ export interface Notification {
   operatorId: string;
   operatorName: string;
   content: string;
+  fromStatus?: TaskStatus;
+  toStatus?: TaskStatus;
 }
 
 export type PaymentMethod = 'cash' | 'wechat' | 'alipay' | 'bank' | 'card';
+
+export interface ReceiptBillAllocation {
+  billId: string;
+  period: string;
+  billTotal: number;
+  billUnpaid: number;
+  allocated: number;
+  discount: number;
+}
 
 export interface Receipt {
   id: string;
@@ -81,8 +99,11 @@ export interface Receipt {
   building: string;
   room: string;
   billId?: string;
-  amount: number;
+  billIds?: string[];
+  allocations?: ReceiptBillAllocation[];
+  totalBillAmount: number;
   discount: number;
+  amount: number;
   method: PaymentMethod;
   payDate: string;
   operatorId: string;

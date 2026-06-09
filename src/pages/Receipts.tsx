@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react';
-import { Plus, Search, Download, Percent, Receipt, DollarSign, Banknote, XCircle } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Plus, Search, Download, Percent, Receipt, DollarSign, Banknote, XCircle, CheckSquare, Square, Wand2, Minus, ChevronDown, CheckCircle2 } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { PaymentMethodTag, BillStatusBadge } from '@/components/ui/StatusBadge';
 import { useAppStore } from '@/store';
-import type { PaymentMethod } from '@/types';
+import type { Bill, PaymentMethod } from '@/types';
 import { formatCurrency, formatDateTime, todayStr } from '@/utils/format';
 import { cn } from '@/utils/helpers';
 
@@ -17,29 +17,26 @@ const paymentMethods: { value: PaymentMethod; label: string; icon: string }[] = 
   { value: 'cash', label: '现金', icon: '💵' },
 ];
 
+type BillSelectionMap = Record<string, { allocation: number; discount: number }>;
+
 export const Receipts = () => {
   const receipts = useAppStore((s) => s.receipts);
   const owners = useAppStore((s) => s.owners);
   const bills = useAppStore((s) => s.bills);
   const staffs = useAppStore((s) => s.staffs);
-  const { addReceipt } = useAppStore();
+  const { addReceiptDetailed } = useAppStore();
 
   const [searchInput, setSearchInput] = useState('');
   const [methodFilter, setMethodFilter] = useState<PaymentMethod | ''>('');
   const [createOpen, setCreateOpen] = useState(false);
 
-  const [form, setForm] = useState({
-    ownerId: '',
-    billId: '',
-    amount: 0,
-    discount: 0,
-    method: 'wechat' as PaymentMethod,
-    remark: '',
-    operatorId: staffs[0]?.id || '',
-    operatorName: staffs[0]?.name || '',
-  });
-  const [useDiscount, setUseDiscount] = useState(false);
-  const [partialPay, setPartialPay] = useState(false);
+  const [ownerId, setOwnerId] = useState('');
+  const [selectedBillIds, setSelectedBillIds] = useState<string[]>([]);
+  const [selections, setSelections] = useState<BillSelectionMap>({});
+  const [method, setMethod] = useState<PaymentMethod>('wechat');
+  const [remark, setRemark] = useState('');
+  const [globalPayAmount, setGlobalPayAmount] = useState<number | ''>('');
+  const [globalDiscount, setGlobalDiscount] = useState<number | ''>('');
 
   const filtered = useMemo(() => {
     return receipts.filter((r) => {
@@ -67,62 +64,186 @@ export const Receipts = () => {
     };
   }, [receipts]);
 
-  const selectedOwner = useMemo(() => owners.find((o) => o.id === form.ownerId), [owners, form.ownerId]);
-  const ownerBills = useMemo(
-    () => (form.ownerId ? bills.filter((b) => b.ownerId === form.ownerId && b.status !== 'void' && b.status !== 'paid') : []),
-    [bills, form.ownerId]
-  );
-  const selectedBill = useMemo(() => bills.find((b) => b.id === form.billId), [bills, form.billId]);
+  const selectedOwner = useMemo(() => owners.find((o) => o.id === ownerId), [owners, ownerId]);
+  const ownerBills = useMemo(() => {
+    if (!ownerId) return [] as Bill[];
+    return bills
+      .filter((b) => b.ownerId === ownerId && b.status !== 'void' && b.status !== 'paid')
+      .sort((a, b) => (a.period > b.period ? 1 : -1));
+  }, [bills, ownerId]);
 
-  const handleOwnerChange = (ownerId: string) => {
-    const oBills = bills.filter((b) => b.ownerId === ownerId && b.status !== 'void' && b.status !== 'paid');
-    const first = oBills[0];
-    setForm({
-      ...form,
-      ownerId,
-      billId: first?.id || '',
-      amount: first ? first.totalAmount - first.paidAmount : 0,
-    });
-    setPartialPay(false);
-    setUseDiscount(false);
+  useEffect(() => {
+    const next: BillSelectionMap = {};
+    for (const b of ownerBills) {
+      const unpaid = Math.round((b.totalAmount - b.paidAmount) * 100) / 100;
+      next[b.id] = selections[b.id] || { allocation: 0, discount: 0 };
+      if (selections[b.id] === undefined) {
+        next[b.id] = { allocation: 0, discount: 0 };
+      }
+    }
+    setSelections(next);
+  }, [ownerBills.length]);
+
+  const handleOwnerChange = (newOwnerId: string) => {
+    setOwnerId(newOwnerId);
+    setSelectedBillIds([]);
+    setSelections({});
+    setGlobalPayAmount('');
+    setGlobalDiscount('');
+    setRemark('');
   };
 
-  const handleBillChange = (billId: string) => {
-    const bill = bills.find((b) => b.id === billId);
-    setForm({
-      ...form,
-      billId,
-      amount: bill ? bill.totalAmount - bill.paidAmount : 0,
+  const toggleBill = (billId: string) => {
+    const bill = ownerBills.find((b) => b.id === billId);
+    if (!bill) return;
+    const unpaid = Math.round((bill.totalAmount - bill.paidAmount) * 100) / 100;
+    setSelectedBillIds((prev) => {
+      const exists = prev.includes(billId);
+      if (!exists) {
+        setSelections((s) => ({
+          ...s,
+          [billId]: { allocation: unpaid, discount: 0 },
+        }));
+        return [...prev, billId];
+      } else {
+        setSelections((s) => ({
+          ...s,
+          [billId]: { allocation: 0, discount: 0 },
+        }));
+        return prev.filter((x) => x !== billId);
+      }
     });
-    setPartialPay(false);
+  };
+
+  const toggleAllBills = () => {
+    if (selectedBillIds.length === ownerBills.length) {
+      setSelectedBillIds([]);
+      const empty: BillSelectionMap = {};
+      for (const b of ownerBills) empty[b.id] = { allocation: 0, discount: 0 };
+      setSelections(empty);
+    } else {
+      const ids: string[] = [];
+      const next: BillSelectionMap = {};
+      for (const b of ownerBills) {
+        const unpaid = Math.round((b.totalAmount - b.paidAmount) * 100) / 100;
+        ids.push(b.id);
+        next[b.id] = { allocation: unpaid, discount: 0 };
+      }
+      setSelectedBillIds(ids);
+      setSelections(next);
+    }
+  };
+
+  const updateSelection = (billId: string, field: 'allocation' | 'discount', rawVal: string) => {
+    const val = Math.max(0, Number(rawVal) || 0);
+    const rounded = Math.round(val * 100) / 100;
+    const bill = ownerBills.find((b) => b.id === billId);
+    const unpaid = bill ? Math.round((bill.totalAmount - bill.paidAmount) * 100) / 100 : 0;
+    let finalAlloc = rounded;
+    if (field === 'allocation') {
+      finalAlloc = Math.min(rounded, unpaid);
+    }
+    setSelections((s) => ({
+      ...s,
+      [billId]: {
+        ...(s[billId] || { allocation: 0, discount: 0 }),
+        [field]: finalAlloc,
+      },
+    }));
+  };
+
+  const runAutoAllocation = () => {
+    if (typeof globalPayAmount !== 'number' || globalPayAmount <= 0) return;
+    const ordered = [...ownerBills].sort((a, b) => (a.period > b.period ? 1 : -1));
+    const next: BillSelectionMap = {};
+    const selectedIds: string[] = [];
+    let remaining = Math.round(globalPayAmount * 100) / 100;
+    const totalDiscount = typeof globalDiscount === 'number' ? Math.round(globalDiscount * 100) / 100 : 0;
+
+    for (let i = 0; i < ordered.length; i++) {
+      const b = ordered[i];
+      const unpaid = Math.round((b.totalAmount - b.paidAmount) * 100) / 100;
+      if (remaining <= 0) {
+        next[b.id] = { allocation: 0, discount: 0 };
+        continue;
+      }
+      let billDiscount = 0;
+      if (totalDiscount > 0) {
+        const futureUnpaid = ordered.slice(i).reduce((s, x) => s + (x.totalAmount - x.paidAmount), 0);
+        billDiscount = futureUnpaid > 0 ? Math.round((totalDiscount * (unpaid / futureUnpaid)) * 100) / 100 : 0;
+      }
+      const effective = Math.max(0, unpaid - billDiscount);
+      const pay = Math.min(remaining, effective);
+      remaining = Math.round((remaining - pay) * 100) / 100;
+      next[b.id] = { allocation: Math.round(pay * 100) / 100, discount: Math.round(billDiscount * 100) / 100 };
+      if (pay > 0 || billDiscount > 0) selectedIds.push(b.id);
+    }
+    setSelections(next);
+    setSelectedBillIds(selectedIds);
+  };
+
+  const totals = useMemo(() => {
+    let totalBill = 0;
+    let totalAlloc = 0;
+    let totalDisc = 0;
+    for (const bid of selectedBillIds) {
+      const sel = selections[bid];
+      const bill = ownerBills.find((b) => b.id === bid);
+      if (!bill || !sel) continue;
+      const unpaid = Math.round((bill.totalAmount - bill.paidAmount) * 100) / 100;
+      totalBill += unpaid;
+      totalAlloc += sel.allocation;
+      totalDisc += sel.discount;
+    }
+    return {
+      totalBill: Math.round(totalBill * 100) / 100,
+      totalAlloc: Math.round(totalAlloc * 100) / 100,
+      totalDisc: Math.round(totalDisc * 100) / 100,
+    };
+  }, [selectedBillIds, selections, ownerBills]);
+
+  const actualPay = totals.totalAlloc;
+  const shouldPay = Math.round(Math.max(0, totals.totalBill - totals.totalDisc) * 100) / 100;
+  const diff = Math.round((actualPay - shouldPay) * 100) / 100;
+  const canSubmit = selectedBillIds.length > 0 && actualPay > 0;
+
+  const resetForm = () => {
+    setOwnerId('');
+    setSelectedBillIds([]);
+    setSelections({});
+    setMethod('wechat');
+    setRemark('');
+    setGlobalPayAmount('');
+    setGlobalDiscount('');
   };
 
   const handleCreate = () => {
-    const owner = owners.find((o) => o.id === form.ownerId);
-    if (!owner) return;
-    addReceipt({
-      ownerId: owner.id,
-      ownerName: owner.name,
-      building: owner.building,
-      room: owner.room,
-      billId: form.billId || undefined,
-      amount: form.amount,
-      discount: useDiscount ? form.discount : 0,
-      method: form.method,
-      operatorId: form.operatorId,
-      operatorName: form.operatorName,
-      remark: form.remark || (useDiscount ? `减免${formatCurrency(form.discount)}` : partialPay ? '部分缴费' : undefined),
+    if (!selectedOwner || !canSubmit) return;
+    const billSelections = selectedBillIds
+      .map((bid) => {
+        const bill = ownerBills.find((b) => b.id === bid);
+        const sel = selections[bid];
+        if (!bill || !sel || (sel.allocation <= 0 && sel.discount <= 0)) return null;
+        return { bill, allocation: sel.allocation, discount: sel.discount };
+      })
+      .filter(Boolean) as Array<{ bill: Bill; allocation: number; discount: number }>;
+    if (billSelections.length === 0) return;
+
+    const op = staffs.find((s) => s.role === 'finance') || staffs[0];
+    addReceiptDetailed({
+      ownerId: selectedOwner.id,
+      ownerName: selectedOwner.name,
+      building: selectedOwner.building,
+      room: selectedOwner.room,
+      method,
+      operatorId: op.id,
+      operatorName: op.name,
+      remark: remark || (totals.totalDisc > 0 ? `优惠减免${formatCurrency(totals.totalDisc)}` : actualPay < totals.totalBill ? '部分缴费' : undefined),
+      billSelections,
     });
     setCreateOpen(false);
-    setForm({
-      ownerId: '', billId: '', amount: 0, discount: 0, method: 'wechat', remark: '',
-      operatorId: staffs[0]?.id || '', operatorName: staffs[0]?.name || '',
-    });
-    setUseDiscount(false);
-    setPartialPay(false);
+    resetForm();
   };
-
-  const actualPay = useMemo(() => form.amount - (useDiscount ? form.discount : 0), [form.amount, form.discount, useDiscount]);
 
   return (
     <div className="space-y-5">
@@ -240,7 +361,7 @@ export const Receipts = () => {
                       <p className="font-medium text-slate-900">{r.ownerName}</p>
                       <p className="text-xs text-slate-500">{r.building} {r.room}</p>
                     </td>
-                    <td className="px-5 py-3.5 text-right text-slate-600 tabular-nums">{formatCurrency(r.amount + r.discount)}</td>
+                    <td className="px-5 py-3.5 text-right text-slate-600 tabular-nums">{formatCurrency(r.totalBillAmount)}</td>
                     <td className="px-5 py-3.5 text-right">
                       {r.discount > 0
                         ? <span className="text-danger-500 font-medium tabular-nums">-{formatCurrency(r.discount)}</span>
@@ -270,24 +391,24 @@ export const Receipts = () => {
       <Modal
         open={createOpen}
         title="登记收款"
-        subtitle="录入业主缴费信息"
+        subtitle="勾选账单后录入实缴金额与减免（自动按账期从早到晚分摊）"
         onClose={() => setCreateOpen(false)}
         size="xl"
         footer={
           <>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
-            <Button onClick={handleCreate} disabled={!form.ownerId || form.amount <= 0 || actualPay <= 0}>
-              确认收款 {actualPay > 0 && `(${formatCurrency(actualPay)})`}
+            <Button onClick={handleCreate} disabled={!canSubmit}>
+              确认收款 {actualPay > 0 && `（实收 ¥${actualPay.toFixed(2)}）`}
             </Button>
           </>
         }
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-4">
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1.5">选择业主 <span className="text-danger-500">*</span></label>
               <select
-                value={form.ownerId}
+                value={ownerId}
                 onChange={(e) => handleOwnerChange(e.target.value)}
                 className="w-full h-11 px-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/30 bg-white"
               >
@@ -299,170 +420,248 @@ export const Receipts = () => {
                 ))}
               </select>
             </div>
-
-            {selectedOwner && (
-              <div className="p-4 rounded-xl bg-gradient-to-br from-primary-50 to-white border border-primary-100">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="text-xs text-slate-500">当前欠费</p>
-                    <p className="text-lg font-bold text-danger-500 font-serif">{formatCurrency(selectedOwner.unpaidAmount)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-500">欠费月数</p>
-                    <p className="text-lg font-bold text-warning-600 font-serif">{selectedOwner.unpaidMonths} 个月</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {ownerBills.length > 0 && (
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">选择账单</label>
-                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                  {ownerBills.map((b) => (
-                    <label
-                      key={b.id}
-                      className={cn(
-                        'flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all',
-                        form.billId === b.id
-                          ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-200'
-                          : 'border-slate-200 hover:border-slate-300'
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          checked={form.billId === b.id}
-                          onChange={() => handleBillChange(b.id)}
-                          className="text-primary-600"
-                        />
-                        <div>
-                          <p className="text-sm font-medium text-slate-900">{b.period} 账期</p>
-                          <p className="text-[11px] text-slate-500">
-                            应收 {formatCurrency(b.totalAmount)} · 已缴 {formatCurrency(b.paidAmount)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <BillStatusBadge status={b.status} />
-                        <p className="text-xs text-danger-500 mt-1 font-medium tabular-nums">
-                          待缴 {formatCurrency(b.totalAmount - b.paidAmount)}
-                        </p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">支付方式 <span className="text-danger-500">*</span></label>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">支付方式</label>
               <div className="grid grid-cols-5 gap-2">
                 {paymentMethods.map((m) => (
-                  <label
+                  <button
                     key={m.value}
+                    type="button"
+                    onClick={() => setMethod(m.value)}
                     className={cn(
-                      'flex flex-col items-center gap-1 p-2.5 rounded-lg border cursor-pointer transition-all text-center',
-                      form.method === m.value
+                      'flex flex-col items-center gap-1 p-2 rounded-lg border transition-all text-center',
+                      method === m.value
                         ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-200'
                         : 'border-slate-200 hover:border-slate-300'
                     )}
                   >
-                    <input
-                      type="radio"
-                      checked={form.method === m.value}
-                      onChange={() => setForm({ ...form, method: m.value })}
-                      className="hidden"
-                    />
                     <span className="text-xl">{m.icon}</span>
                     <span className="text-[10px] text-slate-600">{m.label}</span>
-                  </label>
+                  </button>
                 ))}
               </div>
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-medium text-slate-600">缴费金额（元）</label>
-                {selectedBill && selectedBill.totalAmount - selectedBill.paidAmount > form.amount && (
-                  <button
-                    type="button"
-                    onClick={() => setPartialPay((v) => !v)}
-                    className={cn(
-                      'text-[11px] px-2 py-0.5 rounded-md font-medium border',
-                      partialPay
-                        ? 'bg-warning-50 text-warning-600 border-warning-200'
-                        : 'border-slate-200 text-slate-500 hover:border-slate-300'
-                    )}
-                  >
-                    {partialPay ? '部分缴费' : '全额缴费'}
-                  </button>
-                )}
-              </div>
-              <input
-                type="number"
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: Math.max(0, Number(e.target.value)) })}
-                className="w-full h-14 px-4 rounded-xl border-2 border-primary-200 bg-primary-50/40 text-2xl font-bold text-primary-900 tabular-nums font-serif focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-500 transition-all"
-                placeholder="0.00"
-              />
-              {selectedBill && (
-                <p className="text-[11px] text-slate-400 mt-1">
-                  该账单待缴：{formatCurrency(selectedBill.totalAmount - selectedBill.paidAmount)}
-                </p>
-              )}
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Percent className="w-4 h-4 text-warning-500" />
-                  <span className="text-sm font-medium text-slate-700">费用减免</span>
+          {selectedOwner && (
+            <div className="p-4 rounded-xl bg-gradient-to-br from-primary-50 to-white border border-primary-100">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs text-slate-500">当前欠费</p>
+                  <p className="text-lg font-bold text-danger-500 font-serif tabular-nums">{formatCurrency(selectedOwner.unpaidAmount)}</p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" checked={useDiscount} onChange={(e) => setUseDiscount(e.target.checked)} className="sr-only peer" />
-                  <div className="w-10 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-700"></div>
+                <div>
+                  <p className="text-xs text-slate-500">欠费月数</p>
+                  <p className="text-lg font-bold text-warning-600 font-serif tabular-nums">{selectedOwner.unpaidMonths} 个月</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">联系电话</p>
+                  <p className="text-sm font-medium text-slate-900 mt-0.5 font-mono">{selectedOwner.phone}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-slate-600">总实收金额</label>
+                <input
+                  type="number"
+                  value={globalPayAmount}
+                  onChange={(e) => setGlobalPayAmount(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))}
+                  placeholder="0.00"
+                  className="w-32 h-9 px-3 rounded-lg border border-slate-200 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-400/30"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-slate-600">总减免</label>
+                <input
+                  type="number"
+                  value={globalDiscount}
+                  onChange={(e) => setGlobalDiscount(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))}
+                  placeholder="0.00"
+                  className="w-32 h-9 px-3 rounded-lg border border-warning-200 bg-warning-50/30 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-warning-400/30"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Wand2 className="w-3.5 h-3.5" />}
+                onClick={runAutoAllocation}
+                disabled={typeof globalPayAmount !== 'number' || globalPayAmount <= 0}
+              >
+                自动分摊到最早账期
+              </Button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              💡 勾选下方账单并填入实付金额后，可点击「自动分摊」按钮按账期顺序（最早优先）自动分配到各账单
+            </p>
+          </div>
+
+          {ownerBills.length > 0 ? (
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none" onClick={toggleAllBills}>
+                  {selectedBillIds.length === ownerBills.length ? (
+                    <CheckSquare className="w-4 h-4 text-primary-600" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-400" />
+                  )}
+                  全选未缴账单（按账期升序排列，最早优先）
+                  <span className="ml-2 text-slate-500 font-normal">
+                    ({selectedBillIds.length}/{ownerBills.length})
+                  </span>
                 </label>
               </div>
-              <input
-                type="number"
-                disabled={!useDiscount}
-                value={form.discount}
-                onChange={(e) => setForm({ ...form, discount: Math.max(0, Number(e.target.value)) })}
-                className={cn(
-                  'w-full h-10 px-3 rounded-lg border text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-400/30',
-                  useDiscount ? 'border-warning-300 bg-white text-warning-700' : 'border-slate-200 bg-slate-100 text-slate-400'
-                )}
-                placeholder="0.00"
-              />
-            </div>
-
-            <div className="p-5 rounded-xl bg-gradient-to-br from-success-50 via-white to-primary-50 border border-success-200 shadow-sm">
-              <div className="text-xs text-slate-500 mb-1">实收金额合计</div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-4xl font-bold text-success-700 font-serif tabular-nums tracking-tight">
-                  {formatCurrency(actualPay)}
-                </span>
-                {useDiscount && (
-                  <div className="text-right">
-                    <p className="text-[11px] text-danger-500">优惠减免</p>
-                    <p className="text-sm font-bold text-danger-500">-{formatCurrency(form.discount)}</p>
-                  </div>
-                )}
+              <div className="max-h-[320px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white/95 backdrop-blur-sm shadow-[0_1px_0_0_#e2e8f0]">
+                    <tr className="text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      <th className="px-4 py-2.5 w-10"></th>
+                      <th className="px-4 py-2.5">账期 / 状态</th>
+                      <th className="px-4 py-2.5 text-right">应收</th>
+                      <th className="px-4 py-2.5 text-right">已缴</th>
+                      <th className="px-4 py-2.5 text-right">待缴</th>
+                      <th className="px-4 py-2.5 text-right">本次实付</th>
+                      <th className="px-4 py-2.5 text-right">减免</th>
+                      <th className="px-4 py-2.5 text-right">剩余</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ownerBills.map((b) => {
+                      const unpaid = Math.round((b.totalAmount - b.paidAmount) * 100) / 100;
+                      const checked = selectedBillIds.includes(b.id);
+                      const sel = selections[b.id] || { allocation: 0, discount: 0 };
+                      const alloc = Math.round(sel.allocation * 100) / 100;
+                      const disc = Math.round(sel.discount * 100) / 100;
+                      const remain = Math.round(Math.max(0, unpaid - alloc - disc) * 100) / 100;
+                      return (
+                        <tr key={b.id} className={cn('border-t border-slate-100 transition-colors', checked && 'bg-primary-50/30')}>
+                          <td className="px-4 py-3">
+                            <button type="button" onClick={() => toggleBill(b.id)} className="text-slate-500 hover:text-primary-600">
+                              {checked ? (
+                                <CheckSquare className="w-4 h-4 text-primary-600" />
+                              ) : (
+                                <Square className="w-4 h-4 text-slate-300" />
+                              )}
+                            </button>
+                          </td>
+                          <td className="px-4 py-3">
+                            <p className="text-sm font-medium text-slate-900">{b.period}</p>
+                            <div className="mt-0.5"><BillStatusBadge status={b.status} /></div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-600 tabular-nums">{formatCurrency(b.totalAmount)}</td>
+                          <td className="px-4 py-3 text-right text-slate-500 tabular-nums">{formatCurrency(b.paidAmount)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-danger-500 tabular-nums">{formatCurrency(unpaid)}</td>
+                          <td className="px-4 py-3 text-right">
+                            <input
+                              type="number"
+                              disabled={!checked}
+                              value={alloc}
+                              onChange={(e) => updateSelection(b.id, 'allocation', e.target.value)}
+                              step="0.01"
+                              min={0}
+                              max={unpaid}
+                              className={cn(
+                                'w-28 h-8 px-2 rounded-md border text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary-400/30 transition-all',
+                                checked ? 'border-primary-200 bg-white focus:border-primary-400 text-slate-900 font-semibold' : 'border-slate-200 bg-slate-50 text-slate-400'
+                              )}
+                              placeholder="0.00"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <input
+                              type="number"
+                              disabled={!checked}
+                              value={disc}
+                              onChange={(e) => updateSelection(b.id, 'discount', e.target.value)}
+                              step="0.01"
+                              min={0}
+                              className={cn(
+                                'w-24 h-8 px-2 rounded-md border text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-warning-400/30 transition-all',
+                                checked ? 'border-warning-200 bg-warning-50/30 focus:border-warning-400 text-warning-700 font-medium' : 'border-slate-200 bg-slate-50 text-slate-400'
+                              )}
+                              placeholder="0.00"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={cn('text-sm font-semibold tabular-nums', remain > 0 ? 'text-danger-500' : 'text-success-600')}>
+                              {formatCurrency(remain)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
+          ) : ownerId ? (
+            <div className="py-12 rounded-xl bg-slate-50 border border-slate-100 text-center">
+              <CheckCircle2 className="w-10 h-10 text-success-500 mx-auto mb-2" />
+              <p className="text-sm text-slate-700 font-medium">该业主无未缴账单</p>
+              <p className="text-xs text-slate-500 mt-1">感谢您的支持！</p>
+            </div>
+          ) : null}
 
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">备注说明</label>
-              <textarea
-                value={form.remark}
-                onChange={(e) => setForm({ ...form, remark: e.target.value })}
-                rows={3}
-                placeholder="可填写相关说明，如：业主困难减免、季度优惠等"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/30 resize-none"
-              />
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-stretch">
+            <div className="md:col-span-2 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">备注说明</label>
+                <textarea
+                  value={remark}
+                  onChange={(e) => setRemark(e.target.value)}
+                  rows={3}
+                  placeholder="可填写相关说明，如：业主困难减免、季度优惠等"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/30 resize-none"
+                />
+              </div>
+            </div>
+            <div className="md:col-span-3 p-5 rounded-xl bg-gradient-to-br from-success-50 via-white to-primary-50 border border-success-200 shadow-sm">
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between text-slate-600">
+                  <span>应收合计（已选账单待缴）</span>
+                  <span className="tabular-nums font-medium">{formatCurrency(totals.totalBill)}</span>
+                </div>
+                {totals.totalDisc > 0 && (
+                  <div className="flex items-center justify-between text-danger-600">
+                    <span className="flex items-center gap-1.5">
+                      <Percent className="w-3.5 h-3.5" /> 减免合计
+                    </span>
+                    <span className="tabular-nums font-bold">-{formatCurrency(totals.totalDisc)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-primary-700">
+                  <span>应缴 = 应收 - 减免</span>
+                  <span className="tabular-nums font-semibold">{formatCurrency(shouldPay)}</span>
+                </div>
+                <div className="h-px bg-slate-200/70 my-2" />
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500">实收金额合计（按钮口径）</div>
+                    <div className={cn(
+                      'text-4xl font-bold font-serif tabular-nums tracking-tight',
+                      Math.abs(diff) > 0.01 ? 'text-warning-600' : 'text-success-700'
+                    )}>
+                      ¥{actualPay.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    {Math.abs(diff) > 0.01 && (
+                      <div className="text-[11px] text-warning-600 mb-1">
+                        {diff > 0 ? '超出应缴' : '少于应缴'} ¥{Math.abs(diff).toFixed(2)}
+                      </div>
+                    )}
+                    <div className="text-[11px] text-slate-500">
+                      已选账单：{selectedBillIds.length} 张
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      保存后：账单余额、业主欠费同步更新
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

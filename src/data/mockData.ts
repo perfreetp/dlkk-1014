@@ -85,7 +85,7 @@ export const mockBills: Bill[] = mockOwners.flatMap((owner) => {
 
 const taskPriorities: Task['priority'][] = ['low', 'medium', 'medium', 'high', 'urgent'];
 const taskTypes: Task['type'][] = ['sms', 'sms', 'call', 'call', 'visit'];
-const taskStatuses: Task['status'][] = ['pending', 'pending', 'in_progress', 'in_progress', 'completed', 'completed', 'cancelled'];
+const taskStatuses: Task['status'][] = ['pending', 'pending', 'contacted', 'contacted', 'completed', 'completed', 'cancelled'];
 
 export const mockTasks: Task[] = Array.from({ length: 35 }, (_, i) => {
   const owner = mockOwners[i % mockOwners.length];
@@ -149,7 +149,8 @@ const paymentMethods: Receipt['method'][] = ['wechat', 'wechat', 'alipay', 'bank
 
 export const mockReceipts: Receipt[] = Array.from({ length: 40 }, (_, i) => {
   const owner = mockOwners[i % mockOwners.length];
-  const unpaidBill = mockBills.filter((b) => b.ownerId === owner.id && b.status !== 'paid')[0];
+  const ownerBills = mockBills.filter((b) => b.ownerId === owner.id && b.status !== 'void');
+  const unpaidBill = ownerBills.find((b) => b.status !== 'paid') || ownerBills[0];
   const billAmount = unpaidBill?.totalAmount || Math.round((500 + Math.random() * 3000) * 100) / 100;
   const fullPay = Math.random() > 0.25;
   const amount = fullPay ? billAmount : Math.round(billAmount * (0.3 + Math.random() * 0.4) * 100) / 100;
@@ -157,6 +158,7 @@ export const mockReceipts: Receipt[] = Array.from({ length: 40 }, (_, i) => {
   const method = paymentMethods[i % paymentMethods.length];
   const operatorName = staffNames.finance[i % staffNames.finance.length];
   const payDate = new Date(2026, 5, 1 + Math.floor(Math.random() * 9), 9 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 60)).toISOString().slice(0, 16).replace('T', ' ');
+  const totalBillAmount = Math.round((amount + discount) * 100) / 100;
   return {
     id: generateId('R'),
     ownerId: owner.id,
@@ -164,6 +166,16 @@ export const mockReceipts: Receipt[] = Array.from({ length: 40 }, (_, i) => {
     building: owner.building,
     room: owner.room,
     billId: unpaidBill?.id,
+    billIds: unpaidBill ? [unpaidBill.id] : undefined,
+    allocations: unpaidBill ? [{
+      billId: unpaidBill.id,
+      period: unpaidBill.period,
+      billTotal: unpaidBill.totalAmount,
+      billUnpaid: unpaidBill.totalAmount - unpaidBill.paidAmount,
+      allocated: amount,
+      discount,
+    }] : undefined,
+    totalBillAmount,
     amount,
     discount,
     method,

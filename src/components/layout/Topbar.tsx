@@ -1,7 +1,10 @@
-import { Bell, Search, Settings } from 'lucide-react';
+import { Bell, Search, Settings, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import { useAppStore } from '@/store';
 import { todayStr } from '@/utils/format';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 
 const pageTitles: Record<string, { title: string; subtitle: string }> = {
   '/': { title: '工作仪表盘', subtitle: '今日概览与关键指标' },
@@ -17,6 +20,9 @@ export const Topbar = () => {
   const location = useLocation();
   const notifications = useAppStore((s) => s.notifications);
   const tasks = useAppStore((s) => s.tasks);
+  const resetAllData = useAppStore((s) => s.resetAllData);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const today = todayStr();
   const todayTasks = tasks.filter((t) => t.dueDate === today && t.status !== 'completed');
@@ -33,6 +39,7 @@ export const Topbar = () => {
   const pageInfo = findPageInfo();
 
   return (
+    <>
     <header className="h-16 bg-white border-b border-slate-200/80 sticky top-0 z-30 backdrop-blur-sm bg-white/95">
       <div className="h-full px-8 flex items-center justify-between gap-6">
         <div className="min-w-0 flex-1">
@@ -69,6 +76,15 @@ export const Topbar = () => {
 
           <div className="w-px h-6 bg-slate-200 mx-1" />
 
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            className="p-2.5 rounded-lg text-slate-500 hover:text-warning-600 hover:bg-warning-50 transition-colors"
+            title="重置所有测试数据"
+          >
+            <RotateCcw className="w-5 h-5" />
+          </button>
+
           <div className="flex items-center gap-3">
             <div className="hidden sm:block text-right">
               <p className="text-sm font-semibold text-slate-900">赵主管</p>
@@ -81,5 +97,35 @@ export const Topbar = () => {
         </div>
       </div>
     </header>
+
+    <Modal
+      open={confirmOpen}
+      title="确认重置数据"
+      onClose={() => setConfirmOpen(false)}
+      footer={
+        <>
+          <Button variant="outline" onClick={() => setConfirmOpen(false)}>取消</Button>
+          <Button
+            className="bg-warning-500 hover:bg-warning-600 border-warning-500"
+            onClick={() => { resetAllData(); setConfirmOpen(false); }}
+          >
+            确认重置
+          </Button>
+        </>
+      }
+    >
+      <div className="flex gap-4 items-start">
+        <div className="w-12 h-12 rounded-full bg-warning-50 flex items-center justify-center shrink-0">
+          <AlertTriangle className="w-6 h-6 text-warning-500" />
+        </div>
+        <div className="space-y-2 text-sm">
+          <p className="font-semibold text-slate-900">将清空所有已录入的测试数据</p>
+          <p className="text-slate-600">包括：新建或修改过的业主账单、收款记录、催缴任务流转、通知记录。</p>
+          <p className="text-slate-600">重置后恢复为初始 mock 数据，此操作<strong>不可撤销</strong>。</p>
+          <p className="text-xs text-slate-400 pt-1">（数据仅保存在当前浏览器 localStorage，清除浏览器缓存同样会重置）</p>
+        </div>
+      </div>
+    </Modal>
+    </>
   );
 };
